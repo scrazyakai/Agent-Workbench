@@ -21,6 +21,9 @@ Content-Type: application/json
 ### List drafts
 GET {{baseUrl}}/v1/agents?offset=0&limit=20
 
+### Filter by tag
+GET {{baseUrl}}/v1/agents?tag=demo&limit=20
+
 ### Draft detail
 GET {{baseUrl}}/v1/agents/{{agentId}}
 

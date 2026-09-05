@@ -16,6 +16,22 @@ uv run uvicorn app.main:app --reload --host 127.0.0.1
 
 访问 [OpenAPI 调试页](http://127.0.0.1:8000/docs) 和 [健康检查](http://127.0.0.1:8000/health)。根目录 `main.py` 兼容 `uvicorn main:app`。应用启动不会自动建表；数据库不可达或缺少业务表时健康检查返回 `503`。
 
+## 前端控制台
+
+前端位于 `frontend/`，使用 React、TypeScript 和 Vite。先启动上述 FastAPI 服务，再在另一个终端运行：
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+访问 [Agent 控制台](http://127.0.0.1:5173)。开发服务器会将 `/v1` 和 `/health` 代理到 `127.0.0.1:8000`，无需单独配置 CORS。生产构建使用 `npm run build`，产物位于 `frontend/dist/`；部署时应将 API 与前端置于同源反向代理之后。
+
+控制台提供 `/overview`、`/agents`、`/tools`、`/workflows`、`/runs`、`/evaluations`、`/settings` 和 `/help` 八个可直接访问、刷新和前进后退的页面。Agents 已接通真实 API，支持分页列表、名称与标签筛选、草稿创建和修改、发布新版本及版本时间线。表单包含模型引用、提示词、执行限制和输入输出 JSON Schema，并针对桌面及窄屏布局做了适配。
+
+Tools、Workflows、Runs 和 Evaluations 目前提供完整的信息架构、模块状态和跨页面入口；对应后端 API 尚未实现，页面会明确显示“待接入”，不会伪造业务数据或成功操作。
+
 ## 验证
 
 ```bash
@@ -23,6 +39,7 @@ uv run pytest -q
 uv run ruff check .
 uv run ruff format --check .
 uv run alembic check
+cd frontend && npm run lint && npm run build
 ```
 
 集成测试使用 `.env` 或环境变量中的 `WORKBENCH_TEST_DATABASE_URL`，自动升级专用测试库的迁移，并为每个用例分配随机 Workspace；测试后只清理该用例的数据。没有测试库配置时数据库用例会跳过，不代表集成验证通过。测试覆盖并发发布、草稿与快照隔离、失败回滚、分页、Workspace 查询约束和数据库不可用。
@@ -33,7 +50,7 @@ uv run alembic check
 | --- | --- | --- |
 | GET | `/health` | 数据库与业务表健康检查 |
 | POST | `/v1/agents` | 创建草稿 |
-| GET | `/v1/agents` | 列表，支持 `offset`、`limit` 和名称子串 `name` |
+| GET | `/v1/agents` | 列表，支持 `offset`、`limit`、名称子串 `name` 和精确标签 `tag` |
 | GET | `/v1/agents/{id}` | 草稿详情 |
 | PATCH | `/v1/agents/{id}` | 更新草稿顶层字段 |
 | POST | `/v1/agents/{id}/versions` | 发布配置快照 |
@@ -41,6 +58,8 @@ uv run alembic check
 | GET | `/v1/agents/{id}/versions/{version}` | 版本详情 |
 
 创建草稿只需 `name`；发布要求非空 `system_prompt` 和 `model_config.connection_id`。请求示例见 `test_main.http`。
+
+标签筛选区分大小写，与名称条件取交集，先筛选再分页；`total` 为筛选后总数。例如 `/v1/agents?tag=demo&name=助手&limit=20`。标签中的 `%`、`_` 等字符按字面匹配，不作为通配符。
 
 PATCH 中未提供的顶层字段保持原值，提供的嵌套对象整体替换；嵌套对象中省略的字段采用默认值。`output_schema` 可显式设为 `null`，其余字段不可设为 `null`。输入输出 Schema 使用 JSON Schema Draft 2020-12，目前校验 Schema 定义本身。
 

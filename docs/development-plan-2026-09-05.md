@@ -262,6 +262,16 @@ ai-workbench/
 - 数据库：复用 Docker `xind-postgres`（PostgreSQL 16），新建 `ai_workbench`、`ai_workbench_test`，使用独立项目角色。两库均已完成初始迁移。
 - 测试结果：真实 PostgreSQL 16 上 16 项集成测试通过（含 4 路并发发布）；Ruff 检查与格式检查通过；`alembic check` 无模型漂移；真实 HTTP `/health` 与 Agent 列表返回正常。开发库未写入演示 Agent。
 - 重要决策：按用户要求全程采用 PostgreSQL；草稿编辑与发布使用同一行锁；版本复制完整配置；`model_config` 使用 Pydantic 字段别名；PATCH 嵌套对象整体替换。
-- 未完成及原因：标签筛选顺延；模型和工具依赖存在性、权限校验依赖后续 Registry，目前仅校验配置结构和必要引用。版本发布尚不等于运行能力交付。
+- 未完成及原因：模型和工具依赖存在性、权限校验依赖后续 Registry，目前仅校验配置结构和必要引用。版本发布尚不等于运行能力交付。
 - 依赖提示：当前 Starlette 的 TestClient 存在 httpx 与 AnyIO 弃用提示，不影响本次测试通过；依赖升级时跟进。
 - 下一步：实现 ModelConnection 与 ToolVersion，再进入 Run/Worker；负责人待团队分配。
+
+### 分支续开发
+
+- 分支：`feat/day1-agent-completion`。
+- 完成 P1 标签精确筛选，支持与名称、分页组合；更新请求示例。
+- 补齐当前提交缺失的 Alembic 初始迁移与 Agent 集成测试，使文档中的迁移和验证命令可执行。
+- 验证：当前测试集 21 项通过（9 项 Agent/数据库测试、12 项异常日志测试）；Ruff 通过，Alembic 检查无模型漂移。
+- 增补 React + TypeScript Agent 管理控制台：列表、筛选、创建、编辑、发布、版本时间线及响应式导航。
+- 前端验证：TypeScript 生产构建和 ESLint 通过；浏览器端完成“创建 → 修改 → 发布 v1 → 查看版本”流程，标签空结果与 390px 窄屏布局正常、无横向溢出。
+- 修正前端导航范围：补齐概览、Tools、Workflows、Runs、Evaluations、设置和帮助中心独立页面；支持 URL 深链接、浏览器前进后退与移动端导航自动收起。Agents 使用真实 API，其余模块清晰标记后端接入状态。

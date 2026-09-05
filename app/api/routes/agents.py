@@ -33,8 +33,14 @@ def create_agent(data: AgentCreate, svc: Service):
 
 
 @router.get("", response_model=AgentPage)
-def list_agents(svc: Service, offset: Offset = 0, limit: Limit = 20, name: str | None = None):
-    return svc.list(offset, limit, name)
+def list_agents(
+    svc: Service,
+    offset: Offset = 0,
+    limit: Limit = 20,
+    name: str | None = None,
+    tag: Annotated[str | None, Query(min_length=1, max_length=200, pattern=r"\S")] = None,
+):
+    return svc.list(offset, limit, name, tag)
 
 
 @router.get("/{agent_id}", response_model=AgentRead)
