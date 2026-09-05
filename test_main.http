@@ -1,0 +1,40 @@
+@baseUrl = http://127.0.0.1:8000
+
+### Health
+GET {{baseUrl}}/health
+Accept: application/json
+
+### Create a draft (use a new name when repeating)
+POST {{baseUrl}}/v1/agents
+Content-Type: application/json
+
+{
+  "name": "运营数据助手",
+  "system_prompt": "分析提供的运营数据并返回结论。",
+  "model_config": {"connection_id": "model-demo"},
+  "input_schema": {"type": "object"},
+  "tags": ["demo"]
+}
+
+> {% client.global.set("agentId", response.body.id); %}
+
+### List drafts
+GET {{baseUrl}}/v1/agents?offset=0&limit=20
+
+### Draft detail
+GET {{baseUrl}}/v1/agents/{{agentId}}
+
+### Publish immutable snapshot
+POST {{baseUrl}}/v1/agents/{{agentId}}/versions
+
+### Edit only draft
+PATCH {{baseUrl}}/v1/agents/{{agentId}}
+Content-Type: application/json
+
+{"system_prompt": "分析数据并列出关键指标与限制。"}
+
+### List versions
+GET {{baseUrl}}/v1/agents/{{agentId}}/versions
+
+### Version 1 retains original prompt
+GET {{baseUrl}}/v1/agents/{{agentId}}/versions/1
