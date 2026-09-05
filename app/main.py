@@ -5,10 +5,12 @@ from fastapi import FastAPI
 
 from app.api.router import router
 from app.core.config import Settings
+from app.core.credentials import CredentialCipher
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestLoggingMiddleware
 from app.db.session import build_engine, build_session_factory
+from app.services.model_connections import OpenAICompatibleConnectionTester
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -29,6 +31,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application = FastAPI(title="AI Workbench", version="0.1.0", lifespan=lifespan)
     application.state.settings = settings
     application.state.session_factory = build_session_factory(engine)
+    encryption_key = (
+        settings.credential_encryption_key.get_secret_value()
+        if settings.credential_encryption_key is not None
+        else None
+    )
+    application.state.credential_cipher = CredentialCipher.from_base64_key(encryption_key)
+    application.state.model_connection_tester = OpenAICompatibleConnectionTester(
+        cipher=application.state.credential_cipher
+    )
 
     register_exception_handlers(application)
     application.add_middleware(RequestLoggingMiddleware)

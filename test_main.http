@@ -4,6 +4,26 @@
 GET {{baseUrl}}/health
 Accept: application/json
 
+### Create a model connection
+# Export MODEL_DEMO_KEY in the server process before running the connection test.
+POST {{baseUrl}}/v1/model-connections
+Content-Type: application/json
+
+{
+  "name": "OpenAI Demo",
+  "provider": "openai_compatible",
+  "model_name": "gpt-5",
+  "base_url": "https://api.openai.com/v1",
+  "api_key": "replace-with-a-real-api-key",
+  "timeout_seconds": 10,
+  "enabled": true
+}
+
+> {% client.global.set("connectionId", response.body.id); %}
+
+### Test the model connection
+POST {{baseUrl}}/v1/model-connections/{{connectionId}}/test
+
 ### Create a draft (use a new name when repeating)
 POST {{baseUrl}}/v1/agents
 Content-Type: application/json
@@ -11,7 +31,7 @@ Content-Type: application/json
 {
   "name": "运营数据助手",
   "system_prompt": "分析提供的运营数据并返回结论。",
-  "model_config": {"connection_id": "model-demo"},
+  "model_config": {"connection_id": "{{connectionId}}"},
   "input_schema": {"type": "object"},
   "tags": ["demo"]
 }

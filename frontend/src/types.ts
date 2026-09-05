@@ -59,3 +59,42 @@ export type AgentFormData = {
   inputSchema: string
   outputSchema: string
 }
+
+export type ModelConnection = {
+  id: string
+  workspace_id: string
+  name: string
+  provider: 'openai_compatible'
+  model_name: string
+  base_url: string
+  credential_configured: boolean
+  timeout_seconds: number
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type ModelConnectionPage = {
+  items: ModelConnection[]
+  total: number
+  offset: number
+  limit: number
+}
+
+export type ModelConnectionFormData = {
+  name: string
+  modelName: string
+  baseUrl: string
+  apiKey: string
+  timeoutSeconds: string
+  enabled: boolean
+}
+
+export type ConnectionTestResult = {
+  connection_id: string
+  success: boolean
+  code: string
+  message: string
+  latency_ms: number
+  tested_at: string
+}

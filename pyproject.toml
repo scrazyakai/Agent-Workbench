@@ -10,10 +10,12 @@ dependencies = [
     "pydantic-settings>=2.9,<3",
     "jsonschema>=4.23,<5",
     "psycopg[binary]>=3.2,<4",
+    "httpx>=0.28,<1",
+    "cryptography>=45,<47",
 ]
 
 [dependency-groups]
-dev = ["pytest>=8,<10", "httpx>=0.28,<1", "ruff>=0.12,<1"]
+dev = ["pytest>=8,<10", "ruff>=0.12,<1"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -10,9 +10,11 @@ from sqlalchemy import delete
 from sqlalchemy.engine import make_url
 
 from app.core.config import Settings
-from app.db.models import Agent, AgentVersion
+from app.db.models import Agent, AgentVersion, ModelConnection
 from app.db.session import build_engine
 from app.main import create_app
+
+TEST_CREDENTIAL_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
 
 
 @pytest.fixture(scope="session")
@@ -33,12 +35,19 @@ def database_url():
 @pytest.fixture
 def application(database_url):
     workspace = f"test-{uuid4()}"
-    app = create_app(Settings(database_url=database_url, workspace_id=workspace))
+    app = create_app(
+        Settings(
+            database_url=database_url,
+            workspace_id=workspace,
+            credential_encryption_key=TEST_CREDENTIAL_KEY,
+        )
+    )
     yield app
     engine = build_engine(database_url)
     with engine.begin() as connection:
         connection.execute(delete(AgentVersion).where(AgentVersion.workspace_id == workspace))
         connection.execute(delete(Agent).where(Agent.workspace_id == workspace))
+        connection.execute(delete(ModelConnection).where(ModelConnection.workspace_id == workspace))
     engine.dispose()
 
 

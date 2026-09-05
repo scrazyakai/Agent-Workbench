@@ -3,10 +3,12 @@ import {
   Activity, ArrowRight, Bot, Box, Check, ChevronLeft, ChevronRight, CircleHelp,
   Clock3, Database, FileCode2, GitBranch, Globe2, KeyRound, LayoutDashboard,
   ListChecks, Menu, MoreHorizontal, Network, Play, Plus, Search, Settings,
-  ShieldCheck, Sparkles, Tag, TestTube2, Users, Wrench, X, Zap,
+  Sparkles, Tag, TestTube2, Users, Wrench, X, Zap,
 } from 'lucide-react'
 import { api, ApiError } from './api'
-import type { Agent, AgentFormData, Version } from './types'
+import type {
+  Agent, AgentFormData, ConnectionTestResult, ModelConnection, ModelConnectionFormData, Version,
+} from './types'
 
 const PAGE_SIZE = 6
 
@@ -93,7 +95,7 @@ function ModuleCard({ icon: Icon, title, description, status, action }: { icon: 
   return <button className="module-card" onClick={action}><span className="module-icon"><Icon size={20} /></span><span><strong>{title}</strong><small>{description}</small></span><span className={status === '可用' ? 'module-status ready' : 'module-status'}>{status}</span><ArrowRight size={17} /></button>
 }
 
-function WorkspacePage({ route, agentTotal, notify, navigate }: { route: Exclude<RoutePath, '/agents'>; agentTotal: number; notify: (message: string, kind?: 'success' | 'error') => void; navigate: (path: RoutePath) => void }) {
+function WorkspacePage({ route, agentTotal, connections, reloadConnections, notify, navigate }: { route: Exclude<RoutePath, '/agents'>; agentTotal: number; connections: ModelConnection[]; reloadConnections: () => Promise<void>; notify: (message: string, kind?: 'success' | 'error') => void; navigate: (path: RoutePath) => void }) {
   const planned = () => notify('该模块的后端能力将在下一阶段接入', 'error')
   if (route === '/overview') return <>
     <PageHeading route={route} action={<button className="primary create-button" onClick={() => navigate('/agents')}><Plus size={18} />创建 Agent</button>} />
@@ -131,16 +133,75 @@ function WorkspacePage({ route, agentTotal, notify, navigate }: { route: Exclude
     <EmptyModule icon={TestTube2} title="建立第一个回归数据集" description="导入 JSONL 样本后，可对固定 Agent 版本执行 Schema、字段断言和模型评测。" action="查看 Agents" onAction={() => navigate('/agents')} />
   </>
 
-  if (route === '/settings') return <>
-    <PageHeading route={route} />
-    <section className="settings-list"><div className="settings-row"><span className="feature-icon"><Users /></span><div><h2>Workspace</h2><p>当前使用服务端固定 Workspace，保留未来隔离字段。</p></div><strong>default</strong></div><div className="settings-row"><span className="feature-icon"><Database /></span><div><h2>数据库</h2><p>项目数据和版本快照持久化存储。</p></div><strong><i className="green-dot" />PostgreSQL 16</strong></div><div className="settings-row"><span className="feature-icon"><KeyRound /></span><div><h2>凭证管理</h2><p>模型和工具凭证只保存引用，明文管理待接入。</p></div><span className="module-status">待接入</span></div><div className="settings-row"><span className="feature-icon"><ShieldCheck /></span><div><h2>权限与审计</h2><p>角色授权、发布审计和敏感操作记录。</p></div><span className="module-status">待接入</span></div></section>
-  </>
+  if (route === '/settings') return <ModelConnectionsSettings connections={connections} reload={reloadConnections} notify={notify} />
 
   return <>
     <PageHeading route={route} />
     <section className="help-grid"><article><span>01</span><h2>创建 Agent</h2><p>填写提示词、模型连接引用和执行约束，先保存为草稿。</p><button onClick={() => navigate('/agents')}>打开 Agent Builder <ArrowRight size={15} /></button></article><article><span>02</span><h2>发布版本</h2><p>发布会复制完整配置快照，继续修改草稿不会影响历史版本。</p><button onClick={() => navigate('/agents')}>管理版本 <ArrowRight size={15} /></button></article><article><span>03</span><h2>调试 API</h2><p>FastAPI 自动生成 OpenAPI 文档，可直接检查当前可用接口。</p><a href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer">打开 API 文档 <ArrowRight size={15} /></a></article></section>
     <section className="notice-panel"><CircleHelp /><div><h2>当前交付边界</h2><p>Agents 已接通真实后端；Tools、Workflows、Runs 和 Evaluations 已具备可导航页面，业务 API 将按 PRD 后续里程碑实现。</p></div></section>
   </>
+}
+
+const emptyConnectionForm: ModelConnectionFormData = {
+  name: '', modelName: '', baseUrl: 'https://api.openai.com/v1',
+  apiKey: '', timeoutSeconds: '10', enabled: true,
+}
+
+function connectionForm(connection?: ModelConnection): ModelConnectionFormData {
+  if (!connection) return emptyConnectionForm
+  return {
+    name: connection.name, modelName: connection.model_name, baseUrl: connection.base_url,
+    apiKey: '', timeoutSeconds: String(connection.timeout_seconds),
+    enabled: connection.enabled,
+  }
+}
+
+function ModelConnectionsSettings({ connections, reload, notify }: { connections: ModelConnection[]; reload: () => Promise<void>; notify: (message: string, kind?: 'success' | 'error') => void }) {
+  const [drawer, setDrawer] = useState<ModelConnection | null | undefined>(undefined)
+  const [testing, setTesting] = useState<string | null>(null)
+  const [results, setResults] = useState<Record<string, ConnectionTestResult>>({})
+  const test = async (connection: ModelConnection) => {
+    setTesting(connection.id)
+    try {
+      const result = await api.testModelConnection(connection.id)
+      setResults(current => ({ ...current, [connection.id]: result }))
+      notify(result.message, result.success ? 'success' : 'error')
+    } catch (error) { notify(error instanceof Error ? error.message : '连接测试失败', 'error') }
+    finally { setTesting(null) }
+  }
+  const toggle = async (connection: ModelConnection) => {
+    try {
+      await api.setModelConnectionEnabled(connection.id, !connection.enabled)
+      await reload(); notify(connection.enabled ? '连接已停用' : '连接已启用')
+    } catch (error) { notify(error instanceof Error ? error.message : '状态更新失败', 'error') }
+  }
+  return <>
+    <PageHeading route="/settings" action={<button className="primary create-button" onClick={() => setDrawer(null)}><Plus size={18} />新建连接</button>} />
+    <section className="settings-list settings-summary"><div className="settings-row"><span className="feature-icon"><Users /></span><div><h2>Workspace</h2><p>当前使用服务端固定 Workspace，连接按工作区隔离。</p></div><strong>default</strong></div><div className="settings-row"><span className="feature-icon"><KeyRound /></span><div><h2>凭证安全</h2><p>API Key 使用 AES-GCM 加密保存，接口与 Agent 快照均不会回显凭证。</p></div><span className="module-status ready">已启用</span></div></section>
+    <section className="data-panel connections-panel"><header><div><h2>模型连接</h2><span>{connections.length} 个连接 · OpenAI 兼容协议</span></div></header>
+      {connections.length ? <div className="connection-list">{connections.map(connection => <article className="connection-row" key={connection.id}>
+        <span className="feature-icon"><Globe2 /></span><div className="connection-main"><div><strong>{connection.name}</strong><span className={connection.enabled ? 'status published' : 'status draft'}>{connection.enabled ? '已启用' : '已停用'}</span></div><p>{connection.model_name} · {connection.base_url}</p><small>{connection.credential_configured ? 'API Key 已配置' : 'API Key 未配置'}</small>{results[connection.id] && <em className={results[connection.id].success ? 'test-result success' : 'test-result failure'}>{results[connection.id].message} · {results[connection.id].latency_ms} ms</em>}</div>
+        <div className="connection-actions"><button className="text-button" onClick={() => void test(connection)} disabled={testing === connection.id}><Zap size={15} />{testing === connection.id ? '测试中…' : '测试'}</button><button className="text-button" onClick={() => setDrawer(connection)}>编辑</button><button className="secondary" onClick={() => void toggle(connection)}>{connection.enabled ? '停用' : '启用'}</button></div>
+      </article>)}</div> : <div className="empty-connections"><KeyRound /><h3>还没有模型连接</h3><p>创建连接后，Agent 才能选择模型并发布版本。</p></div>}
+    </section>
+    {drawer !== undefined && <ModelConnectionDrawer connection={drawer} close={() => setDrawer(undefined)} saved={async () => { await reload(); setDrawer(undefined) }} notify={notify} />}
+  </>
+}
+
+function ModelConnectionDrawer({ connection, close, saved, notify }: { connection: ModelConnection | null; close: () => void; saved: () => Promise<void>; notify: (message: string, kind?: 'success' | 'error') => void }) {
+  const [form, setForm] = useState(() => connectionForm(connection || undefined))
+  const [busy, setBusy] = useState(false)
+  const set = (key: keyof ModelConnectionFormData) => (event: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [key]: event.target.value })
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault(); setBusy(true)
+    try {
+      if (connection) await api.updateModelConnection(connection.id, form)
+      else await api.createModelConnection(form)
+      await saved(); notify(connection ? '模型连接已更新' : '模型连接已创建')
+    } catch (error) { notify(error instanceof Error ? error.message : '保存失败', 'error') }
+    finally { setBusy(false) }
+  }
+  return <div className="drawer-layer"><button className="drawer-scrim" aria-label="关闭连接编辑器" onClick={close} /><section className="drawer connection-drawer"><header className="drawer-header"><div><span className="eyebrow">MODEL CONNECTION</span><h2>{connection ? `编辑 ${connection.name}` : '新建模型连接'}</h2></div><button className="icon-button" aria-label="关闭" onClick={close}><X /></button></header><form onSubmit={submit} className="agent-form"><section><h3>连接配置</h3><div className="form-grid"><label>名称<span>*</span><input value={form.name} onChange={set('name')} required /></label><label>供应商<input value="OpenAI Compatible" disabled /></label><label className="full">模型名称<span>*</span><input value={form.modelName} onChange={set('modelName')} placeholder="gpt-5" required /></label><label className="full">Base URL<span>*</span><input value={form.baseUrl} onChange={set('baseUrl')} required /></label><label className="full">API Key{!connection && <span>*</span>}<input type="password" autoComplete="new-password" value={form.apiKey} onChange={set('apiKey')} placeholder={connection ? '留空表示保留当前 API Key' : '请输入 API Key'} required={!connection} /><small>{connection ? '留空不会修改已保存的 API Key；输入新值将覆盖。' : '保存时使用 AES-GCM 加密，之后不会在界面或 API 中回显。'}</small></label><label>连接超时（秒）<input type="number" min="1" max="120" value={form.timeoutSeconds} onChange={set('timeoutSeconds')} required /></label><label className="checkbox-label"><input type="checkbox" checked={form.enabled} onChange={event => setForm({ ...form, enabled: event.target.checked })} />启用连接</label></div></section><footer className="drawer-actions"><div className="spacer" /><button type="button" className="text-button" onClick={close}>取消</button><button className="primary" disabled={busy}>{busy ? '保存中…' : '保存连接'}</button></footer></form></section></div>
 }
 
 function EmptyModule({ icon: Icon, title, description, action, onAction, compact = false }: { icon: typeof Bot; title: string; description: string; action: string; onAction: () => void; compact?: boolean }) {
@@ -161,10 +222,10 @@ function AgentCard({ agent, select }: { agent: Agent; select: () => void }) {
 
 type DrawerProps = {
   agent: Agent | null; mode: 'create' | 'edit'; close: () => void;
-  saved: (agent: Agent) => void; notify: (message: string, kind?: 'success' | 'error') => void
+  connections: ModelConnection[]; saved: (agent: Agent) => void; notify: (message: string, kind?: 'success' | 'error') => void
 }
 
-function AgentDrawer({ agent, mode, close, saved, notify }: DrawerProps) {
+function AgentDrawer({ agent, mode, close, connections, saved, notify }: DrawerProps) {
   const [form, setForm] = useState<AgentFormData>(() => agent ? formFromAgent(agent) : emptyForm)
   const [tab, setTab] = useState<'config' | 'versions'>('config')
   const [versions, setVersions] = useState<Version[]>([])
@@ -174,7 +235,9 @@ function AgentDrawer({ agent, mode, close, saved, notify }: DrawerProps) {
     if (tab === 'versions' && agent) api.listVersions(agent.id).then(r => setVersions(r.items)).catch(e => notify(e.message, 'error'))
   }, [tab, agent, notify])
 
-  const set = (key: keyof AgentFormData) => (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setForm({ ...form, [key]: event.target.value })
+  const set = (key: keyof AgentFormData) => (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => setForm({ ...form, [key]: event.target.value })
+  const currentConnection = connections.find(connection => connection.id === form.connectionId)
+  const legacyConnection = form.connectionId && !currentConnection
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); setBusy(true)
     try {
@@ -201,7 +264,7 @@ function AgentDrawer({ agent, mode, close, saved, notify }: DrawerProps) {
       {mode === 'edit' && <div className="tabs"><button className={tab === 'config' ? 'active' : ''} onClick={() => setTab('config')}>配置</button><button className={tab === 'versions' ? 'active' : ''} onClick={() => setTab('versions')}>版本 {agent?.latest_version ? `(${agent.latest_version})` : ''}</button></div>}
       {tab === 'config' ? <form onSubmit={submit} className="agent-form">
         <section><h3>基本信息</h3><div className="form-grid"><label>名称<span>*</span><input aria-label="名称" value={form.name} onChange={set('name')} placeholder="例如：运营数据助手" required /></label><label>负责人<input aria-label="负责人" value={form.owner} onChange={set('owner')} placeholder="团队成员或邮箱" /></label><label className="full">描述<textarea aria-label="描述" value={form.description} onChange={set('description')} placeholder="说明这个 Agent 解决什么问题" rows={3} /></label><label className="full">标签<input aria-label="标签" value={form.tags} onChange={set('tags')} placeholder="数据, 运营（逗号分隔）" /></label></div></section>
-        <section><h3>模型与提示词</h3><div className="form-grid"><label className="full">模型连接 ID<input aria-label="模型连接 ID" value={form.connectionId} onChange={set('connectionId')} placeholder="model-production" /></label><label>温度<input aria-label="温度" type="number" min="0" max="2" step="0.1" value={form.temperature} onChange={set('temperature')} /></label><label>最大输出 Token<input aria-label="最大输出 Token" type="number" min="1" value={form.maxOutputTokens} onChange={set('maxOutputTokens')} /></label><label className="full">系统提示词<span>*</span><textarea aria-label="系统提示词" value={form.systemPrompt} onChange={set('systemPrompt')} placeholder="描述 Agent 的角色、任务和边界…" rows={7} /></label></div></section>
+        <section><h3>模型与提示词</h3><div className="form-grid"><label className="full">模型连接<select aria-label="模型连接" value={form.connectionId} onChange={set('connectionId')}><option value="">请选择已启用的模型连接</option>{legacyConnection && <option value={form.connectionId}>原引用不存在 · {form.connectionId}</option>}{connections.map(connection => <option key={connection.id} value={connection.id} disabled={!connection.enabled}>{connection.name} · {connection.model_name}{connection.enabled ? '' : '（已停用）'}</option>)}</select>{(legacyConnection || (currentConnection && !currentConnection.enabled)) && <small className="field-warning">当前连接不可用于发布，请重新选择。</small>}</label><label>温度<input aria-label="温度" type="number" min="0" max="2" step="0.1" value={form.temperature} onChange={set('temperature')} /></label><label>最大输出 Token<input aria-label="最大输出 Token" type="number" min="1" value={form.maxOutputTokens} onChange={set('maxOutputTokens')} /></label><label className="full">系统提示词<span>*</span><textarea aria-label="系统提示词" value={form.systemPrompt} onChange={set('systemPrompt')} placeholder="描述 Agent 的角色、任务和边界…" rows={7} /></label></div></section>
         <section><h3>执行约束</h3><div className="form-grid three"><label>最大步骤<input aria-label="最大步骤" type="number" min="1" value={form.maxSteps} onChange={set('maxSteps')} /></label><label>工具调用上限<input aria-label="工具调用上限" type="number" min="0" value={form.maxToolCalls} onChange={set('maxToolCalls')} /></label><label>运行超时（秒）<input aria-label="运行超时" type="number" min="1" value={form.timeoutSeconds} onChange={set('timeoutSeconds')} /></label><label>Token 预算<input aria-label="Token 预算" type="number" min="1" value={form.tokenBudget} onChange={set('tokenBudget')} /></label></div></section>
         <section><h3>输入与输出</h3><div className="form-grid"><label className="full code-field">输入 JSON Schema<textarea aria-label="输入 JSON Schema" value={form.inputSchema} onChange={set('inputSchema')} rows={5} spellCheck={false} /></label><label className="full code-field">输出 JSON Schema（可选）<textarea aria-label="输出 JSON Schema" value={form.outputSchema} onChange={set('outputSchema')} rows={5} spellCheck={false} placeholder={'{\n  "type": "object"\n}'} /></label></div></section>
         <footer className="drawer-actions">{mode === 'edit' && <button type="button" className="secondary" onClick={publish} disabled={busy}><Zap size={16} />发布新版本</button>}<div className="spacer" /><button type="button" className="text-button" onClick={close}>取消</button><button className="primary" disabled={busy}>{busy ? '处理中…' : mode === 'create' ? '创建草稿' : '保存草稿'}</button></footer>
@@ -222,6 +285,7 @@ export default function App() {
   const [drawer, setDrawer] = useState<{ mode: 'create' | 'edit'; agent: Agent | null } | null>(null)
   const [toast, setToast] = useState<{ message: string; kind: 'success' | 'error' } | null>(null)
   const [menu, setMenu] = useState(false)
+  const [connections, setConnections] = useState<ModelConnection[]>([])
 
   useEffect(() => {
     const handlePopState = () => setRoute(currentRoute())
@@ -252,6 +316,16 @@ export default function App() {
     finally { setLoading(false) }
   }, [params])
   useEffect(() => { void load() }, [load])
+  const loadConnections = useCallback(async () => {
+    const result = await api.listModelConnections()
+    setConnections(result.items)
+  }, [])
+  useEffect(() => {
+    void loadConnections().catch(error => {
+      setConnections([])
+      notify(error instanceof Error ? error.message : '无法加载模型连接', 'error')
+    })
+  }, [loadConnections, notify])
 
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const published = agents.filter(agent => agent.latest_version).length
@@ -266,10 +340,10 @@ export default function App() {
           <section className="toolbar"><div className="search-box"><Search size={18} /><input aria-label="搜索 Agent" value={name} onChange={e => { setName(e.target.value); setPage(0) }} placeholder="搜索 Agent 名称…" />{name && <button aria-label="清除搜索" onClick={() => setName('')}><X size={15} /></button>}</div><div className="tag-filter"><Tag size={16} /><input aria-label="按标签筛选" value={tag} onChange={e => { setTag(e.target.value); setPage(0) }} placeholder="筛选标签" /></div><span className="result-count">{total} 个结果</span></section>
           {loading ? <div className="state-panel"><div className="spinner" /><p>正在加载 Agent…</p></div> : error ? <div className="state-panel error-state"><Activity /><h2>连接服务失败</h2><p>{error}</p><button className="secondary" onClick={load}>重新加载</button></div> : agents.length ? <div className="agent-grid">{agents.map(agent => <AgentCard key={agent.id} agent={agent} select={() => setDrawer({ mode: 'edit', agent })} />)}</div> : <div className="state-panel empty-state"><div className="empty-icon"><Bot /></div><h2>{name || tag ? '没有匹配的 Agent' : '创建你的第一个 Agent'}</h2><p>{name || tag ? '试试调整名称或标签筛选条件。' : '从一份可编辑草稿开始，完成配置后发布不可变版本。'}</p>{!name && !tag && <button className="primary" onClick={() => setDrawer({ mode: 'create', agent: null })}><Plus size={18} />创建 Agent</button>}</div>}
           {total > PAGE_SIZE && <nav className="pagination" aria-label="分页"><button className="icon-button" aria-label="上一页" disabled={page === 0} onClick={() => setPage(page - 1)}><ChevronLeft /></button><span>第 {page + 1} / {pages} 页</span><button className="icon-button" aria-label="下一页" disabled={page + 1 >= pages} onClick={() => setPage(page + 1)}><ChevronRight /></button></nav>}
-        </> : <WorkspacePage route={route} agentTotal={total} notify={notify} navigate={navigate} />}
+        </> : <WorkspacePage route={route} agentTotal={total} connections={connections} reloadConnections={loadConnections} notify={notify} navigate={navigate} />}
       </div>
     </main>
-    {drawer && <AgentDrawer mode={drawer.mode} agent={drawer.agent} close={() => setDrawer(null)} saved={() => void load()} notify={notify} />}
+    {drawer && <AgentDrawer mode={drawer.mode} agent={drawer.agent} connections={connections} close={() => setDrawer(null)} saved={() => void load()} notify={notify} />}
     {toast && <div role="status" className={`toast ${toast.kind}`}><span>{toast.kind === 'success' ? <Check size={16} /> : <X size={16} />}</span>{toast.message}</div>}
   </div>
 }

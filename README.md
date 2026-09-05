@@ -1,6 +1,6 @@
 # AI Workbench
 
-基于 FastAPI 和 PostgreSQL 16 的 Agent 开发平台。当前完成 Agent 草稿、配置校验、不可变版本快照和查询接口。
+基于 FastAPI 和 PostgreSQL 16 的 Agent 开发平台。当前完成 Agent 草稿、模型连接管理、配置校验、不可变版本快照和查询接口。
 
 ## 本地启动
 
@@ -28,7 +28,7 @@ npm run dev
 
 访问 [Agent 控制台](http://127.0.0.1:5173)。开发服务器会将 `/v1` 和 `/health` 代理到 `127.0.0.1:8000`，无需单独配置 CORS。生产构建使用 `npm run build`，产物位于 `frontend/dist/`；部署时应将 API 与前端置于同源反向代理之后。
 
-控制台提供 `/overview`、`/agents`、`/tools`、`/workflows`、`/runs`、`/evaluations`、`/settings` 和 `/help` 八个可直接访问、刷新和前进后退的页面。Agents 已接通真实 API，支持分页列表、名称与标签筛选、草稿创建和修改、发布新版本及版本时间线。表单包含模型引用、提示词、执行限制和输入输出 JSON Schema，并针对桌面及窄屏布局做了适配。
+控制台提供 `/overview`、`/agents`、`/tools`、`/workflows`、`/runs`、`/evaluations`、`/settings` 和 `/help` 八个可直接访问、刷新和前进后退的页面。Agents 已接通真实 API，支持分页列表、名称与标签筛选、草稿创建和修改、发布新版本及版本时间线。设置页支持创建、编辑、启停及测试 Model Connection；Agent 表单从启用连接中选择模型引用。
 
 Tools、Workflows、Runs 和 Evaluations 目前提供完整的信息架构、模块状态和跨页面入口；对应后端 API 尚未实现，页面会明确显示“待接入”，不会伪造业务数据或成功操作。
 
@@ -49,6 +49,11 @@ cd frontend && npm run lint && npm run build
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | GET | `/health` | 数据库与业务表健康检查 |
+| POST | `/v1/model-connections` | 创建 OpenAI 兼容模型连接 |
+| GET | `/v1/model-connections` | 分页列出连接，可按名称和启用状态筛选 |
+| GET | `/v1/model-connections/{id}` | 查询连接详情 |
+| PATCH | `/v1/model-connections/{id}` | 修改或启停连接 |
+| POST | `/v1/model-connections/{id}/test` | 解密数据库凭证并验证模型可用性 |
 | POST | `/v1/agents` | 创建草稿 |
 | GET | `/v1/agents` | 列表，支持 `offset`、`limit`、名称子串 `name` 和精确标签 `tag` |
 | GET | `/v1/agents/{id}` | 草稿详情 |
@@ -57,7 +62,21 @@ cd frontend && npm run lint && npm run build
 | GET | `/v1/agents/{id}/versions` | 版本列表，最新在前，支持分页 |
 | GET | `/v1/agents/{id}/versions/{version}` | 版本详情 |
 
-创建草稿只需 `name`；发布要求非空 `system_prompt` 和 `model_config.connection_id`。请求示例见 `test_main.http`。
+创建草稿只需 `name`；发布要求非空 `system_prompt`，且 `model_config.connection_id` 必须指向当前 Workspace 内存在并启用的 Model Connection。请求示例见 `test_main.http`。
+
+Model Connection 首期固定使用 `openai_compatible` 协议。创建时提交 `api_key`，服务使用 AES-256-GCM 和随机 nonce 加密后仅持久化密文；连接 ID 作为附加认证数据（AAD），密文无法复制到另一条连接使用。数据库约束保证每条连接恰好配置密文或旧版环境变量引用中的一种。读取接口只返回 `credential_configured`，不会返回 API Key 或密文。编辑时省略 `api_key` 会保留现有凭证，提供新值则完成轮换。连接测试临时解密真实值，并通过 `{base_url}/models` 验证鉴权及 `model_name`。主密钥缺失、密文认证失败和凭证不存在会返回不同的安全错误码，均不回显密钥。测试不会跟随重定向，也不会回显上游正文或请求头。当前本地开发版本允许 HTTP、回环和私网目标，上线前必须增加权限与 SSRF 限制。
+
+部署前必须生成独立的 32 字节主密钥，并以 Base64 写入不会进入 Git 的 `.env`：
+
+```bash
+# 生成一次并妥善备份；丢失后数据库中的 API Key 无法恢复
+openssl rand -base64 32
+
+# .env
+WORKBENCH_CREDENTIAL_ENCRYPTION_KEY=粘贴上一步的输出
+```
+
+修改主密钥后需要重启后端；不要直接轮换主密钥，否则既有密文将无法解密。迁移前已经保存的 `env://` 引用仍可用于连接测试，在编辑页输入 API Key 并保存后会自动转为数据库密文。
 
 标签筛选区分大小写，与名称条件取交集，先筛选再分页；`total` 为筛选后总数。例如 `/v1/agents?tag=demo&name=助手&limit=20`。标签中的 `%`、`_` 等字符按字面匹配，不作为通配符。
 
@@ -81,4 +100,4 @@ PATCH 中未提供的顶层字段保持原值，提供的嵌套对象整体替�
 
 ## 当前边界
 
-这是 M1 的定义管理部分。模型和工具只保存引用，尚未验证引用存在性或权限，也不执行模型、工具和 Run；此处发布表示配置快照发布，不表示可执行上线。尚未实现鉴权、React、Workflow、Trace 和 Eval，服务仅用于本地开发。固定 Workspace 来自服务端配置，不提供安全多租户承诺。后续优先实现 ModelConnection、工具版本和执行链路。
+这是 M1 的定义管理部分。模型连接已支持 OpenAI 兼容配置与连接测试，但尚不执行 Agent、工具和 Run；此处发布表示配置快照发布，不表示可执行上线。尚未实现鉴权、Secret Store、Workflow、Trace 和 Eval，服务仅用于本地开发。固定 Workspace 来自服务端配置，不提供安全多租户承诺。后续优先实现工具版本和执行链路。

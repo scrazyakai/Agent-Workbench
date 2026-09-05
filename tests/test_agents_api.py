@@ -5,13 +5,23 @@ from fastapi.testclient import TestClient
 
 
 def create(client, name="demo", tags=None):
+    connection = client.post(
+        "/v1/model-connections",
+        json={
+            "name": f"connection-{uuid4()}",
+            "model_name": "gpt-test",
+            "base_url": "https://models.example/v1",
+            "api_key": "MODEL_TEST_PRIVATE",
+        },
+    )
+    assert connection.status_code == 201, connection.text
     response = client.post(
         "/v1/agents",
         json={
             "name": name,
             "tags": tags or [],
             "system_prompt": "Analyze data",
-            "model_config": {"connection_id": "model-test"},
+            "model_config": {"connection_id": connection.json()["id"]},
         },
     )
     assert response.status_code == 201, response.text
@@ -30,6 +40,14 @@ def test_versions_and_snapshot(client):
     assert client.get(f"{path}/versions").json()["total"] == 2
     assert client.patch(f"{path}/versions/1", json={}).status_code == 405
     assert client.delete(f"{path}/versions/1").status_code == 405
+    snapshot = first.json()["snapshot"]
+    assert set(snapshot["model_config"]) == {
+        "connection_id",
+        "temperature",
+        "max_output_tokens",
+        "timeout_seconds",
+    }
+    assert "credential" not in str(snapshot).lower()
 
 
 def test_filters_and_pagination(client):
@@ -72,6 +90,47 @@ def test_publish_requirements(client):
     assert result.status_code == 422
     assert len(result.json()["error"]["details"]) == 2
     assert client.get(path).json()["latest_version"] is None
+
+
+def test_publish_requires_existing_enabled_connection(client):
+    legacy = client.post(
+        "/v1/agents",
+        json={
+            "name": "legacy-reference",
+            "system_prompt": "test",
+            "model_config": {"connection_id": "model-test"},
+        },
+    ).json()
+    result = client.post(f"/v1/agents/{legacy['id']}/versions")
+    assert result.status_code == 422
+    assert result.json()["error"]["details"] == [
+        {
+            "field": "model_config.connection_id",
+            "message": "Model connection does not exist",
+        }
+    ]
+
+    connection = client.post(
+        "/v1/model-connections",
+        json={
+            "name": "disabled",
+            "model_name": "gpt-test",
+            "base_url": "http://127.0.0.1:11434/v1",
+            "api_key": "LOCAL_MODEL_PRIVATE",
+            "enabled": False,
+        },
+    ).json()
+    disabled = client.post(
+        "/v1/agents",
+        json={
+            "name": "disabled-reference",
+            "system_prompt": "test",
+            "model_config": {"connection_id": connection["id"]},
+        },
+    ).json()
+    result = client.post(f"/v1/agents/{disabled['id']}/versions")
+    assert result.status_code == 422
+    assert result.json()["error"]["details"][0]["message"] == "Model connection is disabled"
 
 
 def test_missing(client):

@@ -1,4 +1,7 @@
-import type { Agent, AgentFormData, AgentPage, Version, VersionPage } from './types'
+import type {
+  Agent, AgentFormData, AgentPage, ConnectionTestResult, ModelConnection,
+  ModelConnectionFormData, ModelConnectionPage, Version, VersionPage,
+} from './types'
 
 type ErrorBody = { error?: { message?: string; details?: Array<{ message?: string }> } }
 
@@ -15,6 +18,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: { 'Content-Type': 'application/json', ...init?.headers },
   })
+  const contentType = response.headers.get('content-type') || ''
+  if (!contentType.includes('application/json')) {
+    throw new ApiError(
+      response.status,
+      'API 返回了非 JSON 响应，请确认 FastAPI 已启动并重启前端开发服务以加载代理配置',
+    )
+  }
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ErrorBody
     const detail = body.error?.details?.[0]?.message
@@ -64,4 +74,33 @@ export const api = {
   }),
   publishAgent: (id: string) => request<Version>(`/v1/agents/${id}/versions`, { method: 'POST' }),
   listVersions: (id: string) => request<VersionPage>(`/v1/agents/${id}/versions?limit=100`),
+  listModelConnections: (params = new URLSearchParams({ limit: '100' })) =>
+    request<ModelConnectionPage>(`/v1/model-connections?${params}`),
+  createModelConnection: (form: ModelConnectionFormData) =>
+    request<ModelConnection>('/v1/model-connections', {
+      method: 'POST', body: JSON.stringify(toConnectionPayload(form, true)),
+    }),
+  updateModelConnection: (id: string, form: ModelConnectionFormData) =>
+    request<ModelConnection>(`/v1/model-connections/${id}`, {
+      method: 'PATCH', body: JSON.stringify(toConnectionPayload(form)),
+    }),
+  setModelConnectionEnabled: (id: string, enabled: boolean) =>
+    request<ModelConnection>(`/v1/model-connections/${id}`, {
+      method: 'PATCH', body: JSON.stringify({ enabled }),
+    }),
+  testModelConnection: (id: string) =>
+    request<ConnectionTestResult>(`/v1/model-connections/${id}/test`, { method: 'POST' }),
+}
+
+function toConnectionPayload(form: ModelConnectionFormData, requireApiKey = false) {
+  const payload: Record<string, unknown> = {
+    name: form.name.trim(),
+    provider: 'openai_compatible',
+    model_name: form.modelName.trim(),
+    base_url: form.baseUrl.trim(),
+    timeout_seconds: Number(form.timeoutSeconds),
+    enabled: form.enabled,
+  }
+  if (requireApiKey || form.apiKey.trim()) payload.api_key = form.apiKey.trim()
+  return payload
 }

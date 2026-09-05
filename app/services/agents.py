@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.errors import DomainError
-from app.db.models import Agent, AgentVersion, utcnow
+from app.db.models import Agent, AgentVersion, ModelConnection, utcnow
 from app.schemas.agents import AgentCreate, AgentPatch, AgentRead, VersionRead
 
 
@@ -111,6 +111,35 @@ class AgentService:
                     "message": "Model connection reference is required",
                 }
             )
+        else:
+            try:
+                connection_id = UUID(agent.config["model_config"]["connection_id"])
+            except (TypeError, ValueError):
+                connection_id = None
+            connection = None
+            if connection_id is not None:
+                connection = self.session.scalar(
+                    select(ModelConnection)
+                    .where(
+                        ModelConnection.id == connection_id,
+                        ModelConnection.workspace_id == self.workspace_id,
+                    )
+                    .with_for_update()
+                )
+            if connection is None:
+                details.append(
+                    {
+                        "field": "model_config.connection_id",
+                        "message": "Model connection does not exist",
+                    }
+                )
+            elif not connection.enabled:
+                details.append(
+                    {
+                        "field": "model_config.connection_id",
+                        "message": "Model connection is disabled",
+                    }
+                )
         if details:
             raise DomainError(422, "publish_validation_failed", "Agent is not ready", details)
         version = AgentVersion(

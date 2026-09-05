@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,3 +10,4 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://postgres@localhost:5432/ai_workbench"
     workspace_id: str = Field(default="default", min_length=1, max_length=100)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    credential_encryption_key: SecretStr | None = None
