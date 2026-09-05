@@ -2,7 +2,8 @@ from copy import deepcopy
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import cast, func, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -76,10 +77,12 @@ class AgentService:
         self.commit()
         return self.serialize(agent)
 
-    def list(self, offset, limit, name=None):
+    def list(self, offset, limit, name=None, tag=None):
         filters = [Agent.workspace_id == self.workspace_id]
         if name is not None:
             filters.append(Agent.name.contains(name, autoescape=True))
+        if tag is not None:
+            filters.append(cast(Agent.config["tags"], JSONB).contains([tag]))
         total = self.session.scalar(select(func.count()).select_from(Agent).where(*filters))
         rows = self.session.scalars(
             select(Agent)
