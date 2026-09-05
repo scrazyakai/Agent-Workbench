@@ -11,6 +11,7 @@ from app.core.logging import configure_logging
 from app.core.middleware import RequestLoggingMiddleware
 from app.db.session import build_engine, build_session_factory
 from app.services.model_connections import OpenAICompatibleConnectionTester
+from app.services.tools import ToolRuntime
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -40,6 +41,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.model_connection_tester = OpenAICompatibleConnectionTester(
         cipher=application.state.credential_cipher
     )
+    application.state.tool_runtime = ToolRuntime()
 
     register_exception_handlers(application)
     application.add_middleware(RequestLoggingMiddleware)

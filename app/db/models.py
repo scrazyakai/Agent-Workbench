@@ -73,3 +73,31 @@ class ModelConnection(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Tool(Base):
+    __tablename__ = "tools"
+    __table_args__ = (UniqueConstraint("workspace_id", "name", name="uq_tool_workspace_name"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    workspace_id: Mapped[str] = mapped_column(String(100), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    tool_type: Mapped[str] = mapped_column(String(50))
+    draft: Mapped[dict] = mapped_column(JSON)
+    credential_ciphertext: Mapped[str | None] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    latest_version: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ToolVersion(Base):
+    __tablename__ = "tool_versions"
+    __table_args__ = (UniqueConstraint("tool_id", "version", name="uq_tool_version"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tool_id: Mapped[UUID] = mapped_column(ForeignKey("tools.id"), index=True)
+    workspace_id: Mapped[str] = mapped_column(String(100), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    snapshot: Mapped[dict] = mapped_column(JSON)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

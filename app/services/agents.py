@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.errors import DomainError
-from app.db.models import Agent, AgentVersion, ModelConnection, utcnow
+from app.db.models import Agent, AgentVersion, ModelConnection, Tool, ToolVersion, utcnow
 from app.schemas.agents import AgentCreate, AgentPatch, AgentRead, VersionRead
 
 
@@ -140,6 +140,34 @@ class AgentService:
                         "message": "Model connection is disabled",
                     }
                 )
+        for index, binding in enumerate(agent.config["tool_bindings"]):
+            field = f"tool_bindings.{index}"
+            try:
+                tool_id = UUID(binding["tool_id"])
+            except (KeyError, TypeError, ValueError):
+                tool_id = None
+            tool = None
+            version = None
+            if tool_id is not None:
+                tool = self.session.scalar(
+                    select(Tool).where(
+                        Tool.id == tool_id,
+                        Tool.workspace_id == self.workspace_id,
+                    )
+                )
+                version = self.session.scalar(
+                    select(ToolVersion).where(
+                        ToolVersion.tool_id == tool_id,
+                        ToolVersion.workspace_id == self.workspace_id,
+                        ToolVersion.version == binding["version"],
+                    )
+                )
+            if tool is None:
+                details.append({"field": field, "message": "Tool does not exist"})
+            elif not tool.enabled:
+                details.append({"field": field, "message": "Tool is disabled"})
+            elif version is None:
+                details.append({"field": field, "message": "Tool version does not exist"})
         if details:
             raise DomainError(422, "publish_validation_failed", "Agent is not ready", details)
         version = AgentVersion(

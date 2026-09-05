@@ -228,6 +228,14 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .empty-connections h3 { margin: 12px 0 4px; color: var(--ink); font-size: 15px; }
 .empty-connections p { margin: 0; font-size: 11px; }
 .connection-drawer { --drawer-width: 590px; }
+.tool-binding-list { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tool-binding-list > label { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: white; cursor: pointer; }
+.tool-binding-list > label.disabled { opacity: .55; cursor: not-allowed; }
+.tool-binding-list input { width: 16px; height: 16px; accent-color: var(--accent); }
+.tool-binding-list span { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.tool-binding-list strong { font-size: 11px; }
+.tool-binding-list small, .tool-binding-list > p { color: var(--muted); font-size: 10px; }
+.tool-binding-list > p { grid-column: 1 / -1; margin: 0; padding: 15px; border: 1px dashed var(--line); border-radius: 8px; text-align: center; }
 .toast { position: fixed; z-index: 70; right: 24px; bottom: 24px; padding: 11px 15px 11px 10px; border-radius: 8px; background: #252922; color: white; display: flex; align-items: center; gap: 9px; font-size: 12px; box-shadow: 0 10px 35px rgba(0,0,0,.2); animation: toast-in .2s ease-out; }
 .toast span { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 6px; background: #477b5a; }
 .toast.error span { background: #a65748; }
@@ -267,7 +275,7 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .settings-row > strong, .settings-row > .module-status { grid-column: 2; }
   .connection-row { grid-template-columns: 42px 1fr; }
   .connection-actions { grid-column: 2; flex-wrap: wrap; }
-  .form-grid, .form-grid.three { grid-template-columns: 1fr; }
+  .form-grid, .form-grid.three, .tool-binding-list { grid-template-columns: 1fr; }
   .drawer-header, .agent-form, .version-panel { padding-left: 20px; padding-right: 20px; }
   .drawer-actions { padding-left: 16px; padding-right: 16px; }
 }

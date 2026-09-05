@@ -58,6 +58,7 @@ export type AgentFormData = {
   tokenBudget: string
   inputSchema: string
   outputSchema: string
+  toolBindings: string[]
 }
 
 export type ModelConnection = {
@@ -96,5 +97,91 @@ export type ConnectionTestResult = {
   code: string
   message: string
   latency_ms: number
+  tested_at: string
+}
+
+export type ToolAuth = {
+  type: 'none' | 'bearer' | 'header'
+  header_name: string
+}
+
+export type HttpToolConfig = {
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  endpoint: string
+  allowed_hosts: string[]
+  path_params: Record<string, string>
+  query_params: Record<string, string>
+  header_params: Record<string, string>
+  body_mode: 'none' | 'json'
+  auth: ToolAuth
+  timeout_seconds: number
+  response_max_bytes: number
+  retry: { max_attempts: number; backoff_seconds: number; retry_statuses: number[] }
+}
+
+export type McpToolConfig = {
+  transport: 'streamable_http'
+  server_url: string
+  remote_tool_name: string
+  allowed_hosts: string[]
+  auth: ToolAuth
+  timeout_seconds: number
+}
+
+export type Tool = {
+  id: string
+  workspace_id: string
+  name: string
+  description: string
+  owner: string
+  tags: string[]
+  tool_type: 'http' | 'mcp'
+  input_schema: Record<string, unknown>
+  output_schema: Record<string, unknown> | null
+  config: HttpToolConfig | McpToolConfig
+  risk_level: 'read' | 'write' | 'high'
+  requires_approval: boolean
+  enabled: boolean
+  credential_configured: boolean
+  latest_version: number | null
+  created_at: string
+  updated_at: string
+}
+
+export type ToolPage = { items: Tool[]; total: number; offset: number; limit: number }
+
+export type ToolFormData = {
+  name: string
+  description: string
+  owner: string
+  tags: string
+  toolType: 'http' | 'mcp'
+  endpoint: string
+  method: HttpToolConfig['method']
+  remoteToolName: string
+  allowedHosts: string
+  pathParams: string
+  queryParams: string
+  headerParams: string
+  bodyMode: 'none' | 'json'
+  authType: ToolAuth['type']
+  authHeaderName: string
+  credential: string
+  timeoutSeconds: string
+  responseMaxBytes: string
+  inputSchema: string
+  outputSchema: string
+  riskLevel: Tool['risk_level']
+  requiresApproval: boolean
+  enabled: boolean
+}
+
+export type ToolTestResult = {
+  tool_id: string
+  success: boolean
+  code: string
+  message: string
+  output: unknown
+  duration_ms: number
   tested_at: string
 }

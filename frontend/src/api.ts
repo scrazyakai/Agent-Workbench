@@ -1,6 +1,7 @@
 import type {
   Agent, AgentFormData, AgentPage, ConnectionTestResult, ModelConnection,
-  ModelConnectionFormData, ModelConnectionPage, Version, VersionPage,
+  ModelConnectionFormData, ModelConnectionPage, Tool, ToolFormData, ToolPage,
+  ToolTestResult, Version, VersionPage,
 } from './types'
 
 type ErrorBody = { error?: { message?: string; details?: Array<{ message?: string }> } }
@@ -53,7 +54,10 @@ export function toPayload(form: AgentFormData) {
       max_output_tokens: Number(form.maxOutputTokens),
       timeout_seconds: Number(form.timeoutSeconds),
     },
-    tool_bindings: [],
+    tool_bindings: form.toolBindings.map(value => {
+      const [tool_id, version] = value.split('@')
+      return { tool_id, version: Number(version) }
+    }),
     execution_limits: {
       max_steps: Number(form.maxSteps),
       max_tool_calls: Number(form.maxToolCalls),
@@ -90,6 +94,22 @@ export const api = {
     }),
   testModelConnection: (id: string) =>
     request<ConnectionTestResult>(`/v1/model-connections/${id}/test`, { method: 'POST' }),
+  listTools: () => request<ToolPage>('/v1/tools?limit=100'),
+  createTool: (form: ToolFormData) => request<Tool>('/v1/tools', {
+    method: 'POST', body: JSON.stringify(toToolPayload(form)),
+  }),
+  updateTool: (id: string, form: ToolFormData) => request<Tool>(`/v1/tools/${id}`, {
+    method: 'PATCH', body: JSON.stringify(toToolPayload(form)),
+  }),
+  setToolEnabled: (id: string, enabled: boolean) => request<Tool>(`/v1/tools/${id}`, {
+    method: 'PATCH', body: JSON.stringify({ enabled }),
+  }),
+  publishTool: (id: string) => request(`/v1/tools/${id}/versions`, { method: 'POST' }),
+  testTool: (id: string, argumentsValue: Record<string, unknown>) =>
+    request<ToolTestResult>(`/v1/tools/${id}/test`, {
+      method: 'POST', body: JSON.stringify({ arguments: argumentsValue }),
+    }),
+  discoverMcpTools: (id: string) => request<{ tools: Array<{ name: string; description: string }> }>(`/v1/tools/${id}/discover`, { method: 'POST' }),
 }
 
 function toConnectionPayload(form: ModelConnectionFormData, requireApiKey = false) {
@@ -103,4 +123,32 @@ function toConnectionPayload(form: ModelConnectionFormData, requireApiKey = fals
   }
   if (requireApiKey || form.apiKey.trim()) payload.api_key = form.apiKey.trim()
   return payload
+}
+
+function parseMapping(value: string) {
+  return JSON.parse(value || '{}') as Record<string, string>
+}
+
+function toToolPayload(form: ToolFormData) {
+  const common: Record<string, unknown> = {
+    name: form.name.trim(), description: form.description.trim(), owner: form.owner.trim() || 'unassigned',
+    tags: form.tags.split(',').map(value => value.trim()).filter(Boolean), tool_type: form.toolType,
+    input_schema: parseSchema(form.inputSchema), output_schema: parseSchema(form.outputSchema, true),
+    risk_level: form.riskLevel, requires_approval: form.requiresApproval, enabled: form.enabled,
+  }
+  const auth = { type: form.authType, header_name: form.authHeaderName.trim() || 'Authorization' }
+  const allowed_hosts = form.allowedHosts.split(',').map(value => value.trim()).filter(Boolean)
+  common.config = form.toolType === 'http' ? {
+    method: form.method, endpoint: form.endpoint.trim(), allowed_hosts,
+    path_params: parseMapping(form.pathParams), query_params: parseMapping(form.queryParams),
+    header_params: parseMapping(form.headerParams), body_mode: form.bodyMode, auth,
+    timeout_seconds: Number(form.timeoutSeconds), response_max_bytes: Number(form.responseMaxBytes),
+    retry: { max_attempts: 1, backoff_seconds: 0.25, retry_statuses: [502, 503, 504] },
+  } : {
+    transport: 'streamable_http', server_url: form.endpoint.trim(),
+    remote_tool_name: form.remoteToolName.trim(), allowed_hosts, auth,
+    timeout_seconds: Number(form.timeoutSeconds),
+  }
+  if (form.credential.trim()) common.credential = form.credential.trim()
+  return common
 }

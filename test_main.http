@@ -24,6 +24,45 @@ Content-Type: application/json
 ### Test the model connection
 POST {{baseUrl}}/v1/model-connections/{{connectionId}}/test
 
+### Register an HTTP Tool
+POST {{baseUrl}}/v1/tools
+Content-Type: application/json
+
+{
+  "name": "HTTP Echo Demo",
+  "description": "Demonstrate fixed-target HTTP tool execution",
+  "owner": "platform",
+  "tool_type": "http",
+  "input_schema": {
+    "type": "object",
+    "properties": {"topic": {"type": "string"}},
+    "required": ["topic"],
+    "additionalProperties": false
+  },
+  "config": {
+    "method": "GET",
+    "endpoint": "https://httpbin.org/anything/{topic}",
+    "allowed_hosts": ["httpbin.org"],
+    "path_params": {"topic": "topic"},
+    "body_mode": "none"
+  },
+  "risk_level": "read"
+}
+
+> {% client.global.set("toolId", response.body.id); %}
+
+### Test the HTTP Tool draft
+POST {{baseUrl}}/v1/tools/{{toolId}}/test
+Content-Type: application/json
+
+{"arguments": {"topic": "workbench"}}
+
+### Publish immutable ToolVersion v1
+POST {{baseUrl}}/v1/tools/{{toolId}}/versions
+
+### MCP tools use tool_type=mcp, a Streamable HTTP server_url and remote_tool_name.
+### POST {{baseUrl}}/v1/tools/{{toolId}}/discover lists tools exposed by that MCP Server.
+
 ### Create a draft (use a new name when repeating)
 POST {{baseUrl}}/v1/agents
 Content-Type: application/json
@@ -33,7 +72,8 @@ Content-Type: application/json
   "system_prompt": "分析提供的运营数据并返回结论。",
   "model_config": {"connection_id": "{{connectionId}}"},
   "input_schema": {"type": "object"},
-  "tags": ["demo"]
+  "tags": ["demo"],
+  "tool_bindings": [{"tool_id": "{{toolId}}", "version": 1}]
 }
 
 > {% client.global.set("agentId", response.body.id); %}

@@ -10,7 +10,7 @@ from sqlalchemy import delete
 from sqlalchemy.engine import make_url
 
 from app.core.config import Settings
-from app.db.models import Agent, AgentVersion, ModelConnection
+from app.db.models import Agent, AgentVersion, ModelConnection, Tool, ToolVersion
 from app.db.session import build_engine
 from app.main import create_app
 
@@ -47,6 +47,8 @@ def application(database_url):
     with engine.begin() as connection:
         connection.execute(delete(AgentVersion).where(AgentVersion.workspace_id == workspace))
         connection.execute(delete(Agent).where(Agent.workspace_id == workspace))
+        connection.execute(delete(ToolVersion).where(ToolVersion.workspace_id == workspace))
+        connection.execute(delete(Tool).where(Tool.workspace_id == workspace))
         connection.execute(delete(ModelConnection).where(ModelConnection.workspace_id == workspace))
     engine.dispose()
 

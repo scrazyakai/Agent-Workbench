@@ -18,7 +18,7 @@ class CredentialDecryptionError(Exception):
 
 @dataclass(frozen=True)
 class CredentialCipher:
-    """Encrypt model credentials without ever serializing the master key."""
+    """Encrypt platform credentials without ever serializing the master key."""
 
     _cipher: AESGCM | None
 
@@ -39,14 +39,18 @@ class CredentialCipher:
         return cls(AESGCM(key))
 
     @staticmethod
-    def _aad(connection_id: UUID) -> bytes:
-        return f"ai-workbench:model-connection:{connection_id}:v1".encode()
+    def _aad(resource_type: str, resource_id: UUID) -> bytes:
+        return f"ai-workbench:{resource_type}:{resource_id}:v1".encode()
 
     def encrypt(self, connection_id: UUID, secret: str) -> str:
         if self._cipher is None:
             raise CredentialCipherUnavailable
         nonce = os.urandom(12)
-        encrypted = self._cipher.encrypt(nonce, secret.encode(), self._aad(connection_id))
+        encrypted = self._cipher.encrypt(
+            nonce,
+            secret.encode(),
+            self._aad("model-connection", connection_id),
+        )
         return "v1:" + base64.b64encode(nonce + encrypted).decode()
 
     def decrypt(self, connection_id: UUID, encrypted_value: str) -> str:
@@ -57,6 +61,33 @@ class CredentialCipher:
             raw = base64.b64decode(payload, validate=True)
             if version != "v1" or len(raw) < 29:
                 raise ValueError
-            return self._cipher.decrypt(raw[:12], raw[12:], self._aad(connection_id)).decode()
+            return self._cipher.decrypt(
+                raw[:12],
+                raw[12:],
+                self._aad("model-connection", connection_id),
+            ).decode()
+        except (binascii.Error, InvalidTag, UnicodeDecodeError, ValueError) as exc:
+            raise CredentialDecryptionError from exc
+
+    def encrypt_tool(self, tool_id: UUID, secret: str) -> str:
+        if self._cipher is None:
+            raise CredentialCipherUnavailable
+        nonce = os.urandom(12)
+        encrypted = self._cipher.encrypt(nonce, secret.encode(), self._aad("tool", tool_id))
+        return "v1:" + base64.b64encode(nonce + encrypted).decode()
+
+    def decrypt_tool(self, tool_id: UUID, encrypted_value: str) -> str:
+        if self._cipher is None:
+            raise CredentialCipherUnavailable
+        try:
+            version, payload = encrypted_value.split(":", 1)
+            raw = base64.b64decode(payload, validate=True)
+            if version != "v1" or len(raw) < 29:
+                raise ValueError
+            return self._cipher.decrypt(
+                raw[:12],
+                raw[12:],
+                self._aad("tool", tool_id),
+            ).decode()
         except (binascii.Error, InvalidTag, UnicodeDecodeError, ValueError) as exc:
             raise CredentialDecryptionError from exc

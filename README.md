@@ -28,9 +28,9 @@ npm run dev
 
 访问 [Agent 控制台](http://127.0.0.1:5173)。开发服务器会将 `/v1` 和 `/health` 代理到 `127.0.0.1:8000`，无需单独配置 CORS。生产构建使用 `npm run build`，产物位于 `frontend/dist/`；部署时应将 API 与前端置于同源反向代理之后。
 
-控制台提供 `/overview`、`/agents`、`/tools`、`/workflows`、`/runs`、`/evaluations`、`/settings` 和 `/help` 八个可直接访问、刷新和前进后退的页面。Agents 已接通真实 API，支持分页列表、名称与标签筛选、草稿创建和修改、发布新版本及版本时间线。设置页支持创建、编辑、启停及测试 Model Connection；Agent 表单从启用连接中选择模型引用。
+控制台提供 `/overview`、`/agents`、`/tools`、`/workflows`、`/runs`、`/evaluations`、`/settings` 和 `/help` 八个可直接访问、刷新和前进后退的页面。Agents 已接通真实 API，支持分页列表、名称与标签筛选、草稿创建和修改、工具版本绑定、发布新版本及版本时间线。设置页支持创建、编辑、启停及测试 Model Connection；Tools 页支持 HTTP 与远程 MCP Streamable HTTP 工具的注册、发现、测试、启停和版本发布。
 
-Tools、Workflows、Runs 和 Evaluations 目前提供完整的信息架构、模块状态和跨页面入口；对应后端 API 尚未实现，页面会明确显示“待接入”，不会伪造业务数据或成功操作。
+Workflows、Runs 和 Evaluations 目前提供完整的信息架构、模块状态和跨页面入口；对应后端 API 尚未实现，页面会明确显示“待接入”，不会伪造业务数据或成功操作。
 
 ## 验证
 
@@ -54,6 +54,13 @@ cd frontend && npm run lint && npm run build
 | GET | `/v1/model-connections/{id}` | 查询连接详情 |
 | PATCH | `/v1/model-connections/{id}` | 修改或启停连接 |
 | POST | `/v1/model-connections/{id}/test` | 解密数据库凭证并验证模型可用性 |
+| POST | `/v1/tools` | 注册 HTTP 或 MCP Tool 草稿 |
+| GET | `/v1/tools` | 分页查询工具目录 |
+| GET / PATCH | `/v1/tools/{id}` | 查询或修改工具草稿 |
+| POST | `/v1/tools/{id}/test` | 使用草稿配置执行脱敏测试 |
+| POST | `/v1/tools/{id}/discover` | 发现远程 MCP Server 提供的工具 |
+| POST | `/v1/tools/{id}/versions` | 发布不可变 ToolVersion |
+| GET | `/v1/tools/{id}/versions` | 查询工具版本 |
 | POST | `/v1/agents` | 创建草稿 |
 | GET | `/v1/agents` | 列表，支持 `offset`、`limit`、名称子串 `name` 和精确标签 `tag` |
 | GET | `/v1/agents/{id}` | 草稿详情 |
@@ -78,6 +85,8 @@ WORKBENCH_CREDENTIAL_ENCRYPTION_KEY=粘贴上一步的输出
 
 修改主密钥后需要重启后端；不要直接轮换主密钥，否则既有密文将无法解密。迁移前已经保存的 `env://` 引用仍可用于连接测试，在编辑页输入 API Key 并保存后会自动转为数据库密文。
 
+HTTP Tool 使用固定 Endpoint、显式主机允许列表和输入字段映射；运行前解析 DNS 并拒绝回环、私网、链路本地及其他非公网地址，不跟随重定向，并限制响应大小。MCP Tool 首期仅支持远程 Streamable HTTP，使用官方 Python SDK 完成协议协商、工具发现及调用；出站目标和凭证策略与 HTTP Tool 共用。stdio MCP 会启动本地子进程，首期出于安全原因不开放。工具凭证使用独立 AAD 加密，不进入 ToolVersion 或 AgentVersion 快照。
+
 标签筛选区分大小写，与名称条件取交集，先筛选再分页；`total` 为筛选后总数。例如 `/v1/agents?tag=demo&name=助手&limit=20`。标签中的 `%`、`_` 等字符按字面匹配，不作为通配符。
 
 PATCH 中未提供的顶层字段保持原值，提供的嵌套对象整体替换；嵌套对象中省略的字段采用默认值。`output_schema` 可显式设为 `null`，其余字段不可设为 `null`。输入输出 Schema 使用 JSON Schema Draft 2020-12，目前校验 Schema 定义本身。
@@ -100,4 +109,4 @@ PATCH 中未提供的顶层字段保持原值，提供的嵌套对象整体替�
 
 ## 当前边界
 
-这是 M1 的定义管理部分。模型连接已支持 OpenAI 兼容配置与连接测试，但尚不执行 Agent、工具和 Run；此处发布表示配置快照发布，不表示可执行上线。尚未实现鉴权、Secret Store、Workflow、Trace 和 Eval，服务仅用于本地开发。固定 Workspace 来自服务端配置，不提供安全多租户承诺。后续优先实现工具版本和执行链路。
+这是 M1 的定义管理部分。模型连接、HTTP/MCP Tool Registry 及 Agent 工具版本绑定已经完成，但尚未实现 Agent Run/Worker；此处发布表示配置快照发布，不表示可执行上线。尚未实现鉴权、审批执行、Workflow、Trace 和 Eval，服务仅用于本地开发。固定 Workspace 来自服务端配置，不提供安全多租户承诺。下一步进入 Run 状态机、Worker 和基础 Trace。
