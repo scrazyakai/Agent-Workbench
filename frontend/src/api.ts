@@ -2,7 +2,7 @@ import type {
   Agent, AgentFormData, AgentPage, ConnectionTestResult, ModelConnection,
   ModelConnectionFormData, ModelConnectionPage, Tool, ToolFormData, ToolPage,
   ToolTestResult, Version, VersionPage,
-  Run, RunEventPage, RunPage,
+  Run, RunEventPage, RunPage, RunStep,
 } from './types'
 
 type ErrorBody = { error?: { message?: string; details?: Array<{ message?: string }> } }
@@ -114,7 +114,8 @@ export const api = {
   listRuns: (params = new URLSearchParams({ limit: '100' })) => request<RunPage>(`/v1/runs?${params}`),
   getRun: (id: string) => request<Run>(`/v1/runs/${id}`),
   getRunEvents: (id: string, after = 0) => request<RunEventPage>(`/v1/runs/${id}/events?after=${after}&limit=100`),
-  createRun: (payload: { target: { type: 'agent'; id: string; version: number }; input: Record<string, unknown>; thread_id?: string; idempotency_key?: string }) => request<Run>('/v1/runs', {
+  getRunSteps: (id: string) => request<RunStep[]>(`/v1/runs/${id}/steps`),
+  createRun: (payload: { target: { type: 'agent'; id: string; version: number }; input: Record<string, unknown>; execution_mode?: 'model' | 'deterministic'; thread_id?: string; idempotency_key?: string }) => request<Run>('/v1/runs', {
     method: 'POST', body: JSON.stringify(payload),
   }),
   cancelRun: (id: string) => request<Run>(`/v1/runs/${id}/cancel`, { method: 'POST' }),

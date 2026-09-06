@@ -593,6 +593,17 @@ idempotency_key 用于避免客户端重试重复创建 Run；不代表 Run 内�
 
 ## 11. 交付阶段
 
+### 2026-09-06 实现进度
+
+- 已完成确定性 Durable Runtime，并扩展到真实 OpenAI-compatible 模型 → 已发布只读 HTTP/MCP 工具 → 最终结果闭环。
+- 已实现运行配置快照、对话与工具结果 Checkpoint、租约代次防旧 Worker 写回、thread 领取互斥、请求中取消、总时限及步骤/工具/Token 预算。
+- Runs 页面已接入 SSE 断线续传、按步骤/尝试分组的模型输出、基础调用 Trace 和用量统计；确定性测试模式保留。
+- M1/M2 尚未整体验收完成：鉴权、人工审批、外部副作用幂等、完整 Span Trace、费用计价与 Eval 尚未实现。当前工具限只读，至少一次恢复可能重复调用或计费。
+- 真实模型调用使用 LangChain `ChatOpenAI`，模型/工具循环使用 LangGraph `StateGraph`；不手写模型 HTTP 请求和 SSE 解码。平台继续负责工具安全策略、预算、取消及数据库租约。每个图节点通过现有事务原子提交业务 Checkpoint，不另启用独立持久化的 LangGraph checkpointer，原生图审批/时间旅行仍未实现。
+- Redis Streams 仍按 §7.1、M2.5 后置。操作、协议兼容边界与验收说明见仓库 README。
+
+### 阶段目标
+
 | 阶段 | 交付内容 | 完成标准 |
 | --- | --- | --- |
 | M1：单 Agent 闭环 | 基础权限、模型连接、Builder、HTTP / Python 工具、Runtime、基础 Trace | 一个工具型 Agent 可配置、发布并通过 API 调用 |

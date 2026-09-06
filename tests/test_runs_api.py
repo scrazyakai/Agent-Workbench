@@ -34,6 +34,7 @@ def published_agent(client, name="runtime-agent", input_schema=None):
 
 def create_run(client, agent, *, input_value=None, thread_id=None, key=None):
     payload = {
+        "execution_mode": "deterministic",
         "target": {"type": "agent", "id": agent["id"], "version": 1},
         "input": input_value or {"question": "hello"},
     }

@@ -8,7 +8,7 @@ import {
 import { api, ApiError } from './api'
 import type {
   Agent, AgentFormData, ConnectionTestResult, HttpToolConfig, McpToolConfig, ModelConnection,
-  ModelConnectionFormData, Run, RunEvent, RunStatus, RunSummary, Tool, ToolFormData,
+  ModelConnectionFormData, Run, RunEvent, RunStatus, RunStep, RunSummary, Tool, ToolFormData,
   ToolTestResult, Version,
 } from './types'
 
@@ -309,7 +309,7 @@ function ToolTestDrawer({ tool, close, completed, notify }: { tool: Tool; close:
 
 const runLabels: Record<RunStatus, string> = {
   queued: '排队中', running: '运行中', succeeded: '已成功', failed: '失败',
-  cancelling: '取消中', cancelled: '已取消',
+  cancelling: '取消中', cancelled: '已取消', timed_out: '已超时',
 }
 
 function RunsPage({ notify, preset, clearPreset }: { notify: (message: string, kind?: 'success' | 'error') => void; preset: { agentId: string; version: number } | null; clearPreset: () => void }) {
@@ -352,6 +352,7 @@ function CreateRunDrawer({ preset, close, saved, notify }: { preset: { agentId: 
   const [version, setVersion] = useState(preset ? String(preset.version) : '')
   const [input, setInput] = useState('{}')
   const [threadId, setThreadId] = useState('')
+  const [executionMode, setExecutionMode] = useState<'model' | 'deterministic'>('model')
   const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)
   useEffect(() => {
@@ -372,27 +373,98 @@ function CreateRunDrawer({ preset, close, saved, notify }: { preset: { agentId: 
     event.preventDefault(); setBusy(true)
     try {
       const value = JSON.parse(input) as Record<string, unknown>
-      const run = await api.createRun({ target: { type: 'agent', id: agentId, version: Number(version) }, input: value, ...(threadId.trim() ? { thread_id: threadId.trim() } : {}), ...(key.trim() ? { idempotency_key: key.trim() } : {}) })
+      const run = await api.createRun({ target: { type: 'agent', id: agentId, version: Number(version) }, input: value, execution_mode: executionMode, ...(threadId.trim() ? { thread_id: threadId.trim() } : {}), ...(key.trim() ? { idempotency_key: key.trim() } : {}) })
       notify('Run 已创建'); saved(run)
     } catch (error) { notify(error instanceof SyntaxError ? 'Run 输入不是合法 JSON' : error instanceof Error ? error.message : '创建失败', 'error') }
     finally { setBusy(false) }
   }
-  return <div className="drawer-layer"><button className="drawer-scrim" aria-label="关闭 Run 创建器" onClick={close} /><section className="drawer connection-drawer"><header className="drawer-header"><div><span className="eyebrow">AGENT RUNTIME</span><h2>创建 Run</h2></div><button className="icon-button" aria-label="关闭" onClick={close}><X /></button></header><form onSubmit={submit} className="agent-form"><section><h3>执行目标</h3><div className="form-grid"><label className="full">已发布 Agent<select value={agentId} onChange={event => { setAgentId(event.target.value); setVersion('') }} required><option value="">请选择 Agent</option>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label><label>版本<select value={version} onChange={event => setVersion(event.target.value)} required><option value="">请选择版本</option>{versions.map(item => <option key={item.id} value={item.version}>v{item.version}</option>)}</select></label><label>Thread ID<input value={threadId} onChange={event => setThreadId(event.target.value)} placeholder="可选，同一 Thread 串行" /></label><label className="full">幂等键<input value={key} onChange={event => setKey(event.target.value)} placeholder="可选，重试创建时复用" /></label></div></section><section><h3>输入</h3><div className="form-grid"><label className="full code-field">JSON 输入<textarea value={input} onChange={event => setInput(event.target.value)} rows={10} spellCheck={false} /></label></div></section><footer className="drawer-actions"><div className="spacer" /><button type="button" className="text-button" onClick={close}>取消</button><button className="primary" disabled={busy || !agentId || !version}>{busy ? '创建中…' : '创建 Run'}</button></footer></form></section></div>
+  return <div className="drawer-layer"><button className="drawer-scrim" aria-label="关闭 Run 创建器" onClick={close} /><section className="drawer connection-drawer">
+    <header className="drawer-header"><div><span className="eyebrow">AGENT RUNTIME</span><h2>创建 Run</h2></div><button className="icon-button" aria-label="关闭" onClick={close}><X /></button></header>
+    <form onSubmit={submit} className="agent-form"><section><h3>执行目标</h3><div className="form-grid">
+      <label className="full">已发布 Agent<select value={agentId} onChange={event => { setAgentId(event.target.value); setVersion('') }} required><option value="">请选择 Agent</option>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
+      <label>版本<select value={version} onChange={event => setVersion(event.target.value)} required><option value="">请选择版本</option>{versions.map(item => <option key={item.id} value={item.version}>v{item.version}</option>)}</select></label>
+      <label>执行模式<select value={executionMode} onChange={event => setExecutionMode(event.target.value as 'model' | 'deterministic')}><option value="model">真实模型（会产生调用费用）</option><option value="deterministic">确定性测试（不调用外部服务）</option></select></label>
+      <label className="full">Thread ID<input value={threadId} onChange={event => setThreadId(event.target.value)} placeholder="可选，同一 Thread 串行，不共享历史对话" /></label>
+      <label className="full">幂等键<input value={key} onChange={event => setKey(event.target.value)} placeholder="可选，重试创建时复用" /></label>
+    </div></section><section><h3>输入</h3><div className="form-grid"><label className="full code-field">JSON 输入<textarea value={input} onChange={event => setInput(event.target.value)} rows={10} spellCheck={false} /></label></div></section>
+    <footer className="drawer-actions"><div className="spacer" /><button type="button" className="text-button" onClick={close}>取消</button><button className="primary" disabled={busy || !agentId || !version}>{busy ? '创建中…' : '创建 Run'}</button></footer></form>
+  </section></div>
 }
 
 function RunDetailDrawer({ runId, close, changed, notify }: { runId: string; close: () => void; changed: () => Promise<void>; notify: (message: string, kind?: 'success' | 'error') => void }) {
   const [run, setRun] = useState<Run | null>(null)
   const [events, setEvents] = useState<RunEvent[]>([])
+  const [steps, setSteps] = useState<RunStep[]>([])
+  const [streamStatus, setStreamStatus] = useState('正在连接实时事件…')
   const load = useCallback(async () => {
-    try { const [current, timeline] = await Promise.all([api.getRun(runId), api.getRunEvents(runId)]); setRun(current); setEvents(timeline.items) }
+    try { const [current, trace] = await Promise.all([api.getRun(runId), api.getRunSteps(runId)]); setRun(current); setSteps(trace) }
     catch (error) { notify(error instanceof Error ? error.message : '无法加载 Run', 'error') }
   }, [runId, notify])
-  useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 2000); return () => window.clearInterval(timer) }, [load])
+  useEffect(() => {
+    setEvents([]); setSteps([]); setRun(null)
+    void load()
+    let cursor = 0
+    let refreshTimer: number | undefined
+    let reconnectTimer: number | undefined
+    let stopped = false
+    let retryDelay = 1000
+    let source: EventSource
+    const connect = () => {
+      source = new EventSource(`/v1/runs/${runId}/stream?after=${cursor}`)
+      source.onopen = () => { if (!stopped) setStreamStatus('实时事件已连接') }
+      source.addEventListener('run_event', (message: MessageEvent) => {
+        if (stopped) return
+        const event = JSON.parse(message.data) as RunEvent
+        if (event.sequence <= cursor) return
+        cursor = event.sequence
+        retryDelay = 1000
+        setEvents(previous => [...previous, event])
+        if (event.event_type !== 'model_output_delta' && refreshTimer === undefined) {
+          refreshTimer = window.setTimeout(() => { refreshTimer = undefined; void load() }, 250)
+        }
+      })
+      source.addEventListener('done', () => {
+        source.close(); stopped = true; setStreamStatus('事件同步完成'); void load()
+      })
+      source.onerror = () => {
+        // Some HTTP failures leave native EventSource CLOSED; explicitly resume our cursor.
+        source.close()
+        if (stopped) return
+        setStreamStatus('连接中断，正在从上次事件自动重连…')
+        reconnectTimer = window.setTimeout(connect, retryDelay)
+        retryDelay = Math.min(retryDelay * 2, 10000)
+      }
+    }
+    connect()
+    return () => {
+      stopped = true; source.close()
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
+    }
+  }, [load, runId])
+  const outputs = new Map<string, string>()
+  for (const event of events) {
+    if (event.event_type !== 'model_output_delta') continue
+    const key = `${String(event.payload.step)} · 尝试 ${String(event.payload.attempt)}`
+    outputs.set(key, (outputs.get(key) || '') + String(event.payload.delta || ''))
+  }
   const cancel = async () => {
     try { await api.cancelRun(runId); notify('已提交取消请求'); await load(); await changed() }
     catch (error) { notify(error instanceof Error ? error.message : '取消失败', 'error') }
   }
-  return <div className="drawer-layer"><button className="drawer-scrim" aria-label="关闭 Run 详情" onClick={close} /><section className="drawer"><header className="drawer-header"><div><span className="eyebrow">RUN DETAILS</span><h2>{run ? `${runLabels[run.status]} · ${run.id.slice(0, 8)}` : '加载中…'}</h2></div><button className="icon-button" aria-label="关闭" onClick={close}><X /></button></header>{run && <div className="run-detail"><section className="run-meta"><div><span>Agent 版本</span><strong>v{run.target.version}</strong></div><div><span>恢复次数</span><strong>{run.recovery_count}</strong></div><div><span>执行失败次数</span><strong>{run.execution_attempts}</strong></div></section><section><div className="section-title"><div><h3>输入</h3></div></div><pre>{JSON.stringify(run.input, null, 2)}</pre></section>{(run.result || run.error) && <section><div className="section-title"><div><h3>{run.result ? '结果' : '错误'}</h3></div></div><pre>{JSON.stringify(run.result || run.error, null, 2)}</pre></section>}<section><div className="section-title"><div><h3>事件时间线</h3></div></div><div className="event-list">{events.map(event => <div key={event.id}><i /><span><strong>{event.event_type}</strong><small>#{event.sequence} · {new Date(event.created_at).toLocaleString('zh-CN')}</small></span></div>)}</div></section></div>}<footer className="drawer-actions">{run && ['queued', 'running', 'cancelling'].includes(run.status) && <button className="secondary" onClick={() => void cancel()}>取消 Run</button>}<div className="spacer" /><button className="primary" onClick={close}>关闭</button></footer></section></div>
+  return <div className="drawer-layer"><button className="drawer-scrim" aria-label="关闭 Run 详情" onClick={close} /><section className="drawer">
+    <header className="drawer-header"><div><span className="eyebrow">RUN DETAILS</span><h2>{run ? `${runLabels[run.status]} · ${run.id.slice(0, 8)}` : '加载中…'}</h2></div><button className="icon-button" aria-label="关闭" onClick={close}><X /></button></header>
+    {run && <div className="run-detail">
+      <section className="run-meta"><div><span>执行模式 · v{run.target.version}</span><strong>{run.execution_mode === 'model' ? '真实模型' : '确定性测试'}</strong></div><div><span>恢复次数</span><strong>{run.recovery_count}</strong></div><div><span>执行失败次数</span><strong>{run.execution_attempts}</strong></div></section>
+      {run.execution_mode === 'model' && <section><h3>调用与预算</h3><div className="run-meta"><div><span>模型 / 工具调用</span><strong>{run.usage.model_calls || 0} / {run.usage.tool_calls || 0}</strong></div><div><span>已报告 Token</span><strong>{run.usage.total_tokens ?? '未知'}</strong></div><div><span>预算占用（含预留）</span><strong>{run.usage.charged_tokens || 0}</strong></div></div><p>未报告用量的调用按保守预留计入预算；费用尚未配置计价。</p></section>}
+      <section><h3>输入</h3><pre>{JSON.stringify(run.input, null, 2)}</pre></section>
+      {(run.result || run.error) && <section><h3>{run.result ? '结果' : '错误'}</h3><pre>{JSON.stringify(run.result || run.error, null, 2)}</pre></section>}
+      {outputs.size > 0 && <section><h3>模型输出（中间内容不代表最终结果）</h3>{Array.from(outputs, ([key, text]) => <details key={key} open><summary>{key}</summary><pre>{text}</pre></details>)}</section>}
+      <section><h3>步骤 Trace</h3>{steps.length === 0 ? <p>等待 Worker 开始执行。</p> : steps.map(step => <details key={step.id}><summary>{step.step_key} · {step.status} · 尝试 {step.attempt_count}{step.error_code ? ` · ${step.error_code}` : ''}</summary><pre>{JSON.stringify({ input: step.input_summary, output: step.output_summary }, null, 2)}</pre></details>)}</section>
+      <section><h3>事件时间线</h3><p role="status">{streamStatus} · 已同步 {events.length} 条事件</p><div className="event-list">{events.filter(event => event.event_type !== 'model_output_delta').map(event => <div key={event.id}><i /><span><strong>{event.event_type}</strong><small>#{event.sequence} · {new Date(event.created_at).toLocaleString('zh-CN')}</small></span></div>)}</div></section>
+    </div>}
+    <footer className="drawer-actions">{run && ['queued', 'running', 'cancelling'].includes(run.status) && <button className="secondary" disabled={run.status === 'cancelling'} onClick={() => void cancel()}>{run.status === 'cancelling' ? '取消中…' : '取消 Run'}</button>}<div className="spacer" /><button className="primary" onClick={close}>关闭</button></footer>
+  </section></div>
 }
 
 function EmptyModule({ icon: Icon, title, description, action, onAction, compact = false }: { icon: typeof Bot; title: string; description: string; action: string; onAction: () => void; compact?: boolean }) {

@@ -72,4 +72,22 @@ running --租约过期--> queued
 
 ## 6. 后续入口
 
-下一步将确定性 `produce_result` 替换为受预算约束的模型调用循环，再通过已发布 ToolVersion 接入工具调用。事件契约、StepExecution 和 Checkpoint 保持不变，随后增加 SSE 投递层与基础 Trace 展示。
+原计划的后续入口已于同日继续实施，以下补充范围不改变上文确定性阶段的历史记录。
+
+## 7. 同日追加：受控模型与工具闭环
+
+- [x] 真实 OpenAI-compatible Chat Completions 流式适配，保留显式确定性模式。
+- [x] 固定运行配置快照，调用已绑定 ToolVersion，仅放行只读无审批工具。
+- [x] 对话和工具响应 Checkpoint，已提交步骤恢复不重复调用。
+- [x] 租约代次与过期检查，阻止旧 Worker 续租或写回；同 thread 并发领取互斥。
+- [x] 步骤/工具/Token 预算、总时限和请求等待期间的取消。
+- [x] SSE 历史补齐与游标恢复、Runs 模型输出和基础步骤 Trace。
+- [x] PostgreSQL 全量回归、前端 lint 和生产构建。
+
+仍不做人工审批、写工具、Workflow、完整 Span 树、Eval、费用定价和 Redis 调度。工具只读声明需要注册方保证；模型调用与工具调用仍可能在检查点前崩溃时重复。后续应先进行用户实际模型服务联调，再推进审批与外部副作用幂等设计。
+
+## 8. 实现调整：采用 LangChain / LangGraph
+
+按用户要求，真实生成改用 LangChain `ChatOpenAI`，删除手写模型 HTTP/SSE 实现；循环编排改用 LangGraph `StateGraph` 的模型/工具节点与条件路由。保留单 Worker 单并发、数据库租约、检查点事务、只读策略、预算、取消和前端事件接口。
+
+检查点继续由已有 PostgreSQL 事务管理，不引入第二套独立提交的图持久化；在每个节点边界读取已提交状态恢复。SDK 重试关闭，平台统一处理重试计费；LangSmith 隐式追踪关闭。更新依赖和锁文件后须 `uv sync` 并重启进程，无新增数据库迁移。真实供应商联调仍需单独验收。

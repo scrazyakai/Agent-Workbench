@@ -186,11 +186,13 @@ export type ToolTestResult = {
   tested_at: string
 }
 
-export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelling' | 'cancelled'
+export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'cancelling' | 'cancelled'
 
 export type RunTarget = { type: 'agent'; id: string; version: number }
 
 export type RunSummary = {
+  execution_mode: 'model' | 'deterministic'
+  usage: Record<string, number>
   id: string
   workspace_id: string
   target: RunTarget
@@ -226,4 +228,17 @@ export type RunEventPage = {
   items: RunEvent[]
   next_cursor: number
   has_more: boolean
+}
+
+export type RunStep = {
+  id: string
+  step_key: string
+  status: string
+  attempt_count: number
+  input_summary: Record<string, unknown> | null
+  output_summary: Record<string, unknown> | null
+  error_code: string | null
+  created_at: string
+  updated_at: string
+  completed_at: string | null
 }

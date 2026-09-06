@@ -1,5 +1,6 @@
 import hashlib
 import json
+from copy import deepcopy
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -7,10 +8,19 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.errors import DomainError
-from app.db.models import AgentVersion, Run, RunEvent, utcnow
+from app.db.models import (
+    AgentVersion,
+    ModelConnection,
+    Run,
+    RunEvent,
+    StepExecution,
+    Tool,
+    ToolVersion,
+    utcnow,
+)
 from app.schemas.runs import RunCreate, RunEventRead, RunRead, RunSummary
 
-TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
+TERMINAL_STATUSES = {"succeeded", "failed", "timed_out", "cancelled"}
 
 
 def request_fingerprint(data: RunCreate) -> str:
@@ -19,6 +29,12 @@ def request_fingerprint(data: RunCreate) -> str:
             "target": data.target.model_dump(mode="json"),
             "thread_id": data.thread_id,
             "input": data.input,
+            # Preserve pre-model-runtime deterministic idempotency keys across migration.
+            **(
+                {"execution_mode": data.execution_mode}
+                if data.execution_mode != "deterministic"
+                else {}
+            ),
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -59,6 +75,8 @@ class RunService:
     @staticmethod
     def summary(run: Run):
         return RunSummary(
+            execution_mode=run.execution_mode,
+            usage=run.usage,
             id=run.id,
             workspace_id=run.workspace_id,
             target={"type": "agent", "id": run.agent_id, "version": run.agent_version},
@@ -105,6 +123,8 @@ class RunService:
             raise DomainError(404, "agent_version_not_found", "Published Agent version not found")
 
         run = Run(
+            execution_mode=data.execution_mode,
+            config_snapshot=self._snapshot(version) if data.execution_mode == "model" else {},
             workspace_id=self.workspace_id,
             agent_id=version.agent_id,
             agent_version_id=version.id,
@@ -134,6 +154,61 @@ class RunService:
                 raise DomainError(409, "run_conflict", "Run could not be created") from exc
             return self._resolve_idempotent(existing, fingerprint)
         return self.serialize(run)
+
+    def _snapshot(self, version):
+        config = deepcopy(version.snapshot)
+        connection = self.session.scalar(
+            select(ModelConnection).where(
+                ModelConnection.id == UUID(config["model_config"]["connection_id"]),
+                ModelConnection.workspace_id == self.workspace_id,
+            )
+        )
+        if connection is None or not connection.enabled:
+            raise DomainError(422, "model_unavailable", "Model connection is missing or disabled")
+        model = {
+            key: getattr(connection, key)
+            for key in ("provider", "model_name", "base_url", "timeout_seconds")
+        }
+        model["connection_id"] = str(connection.id)
+        tools = []
+        for binding in config["tool_bindings"]:
+            tool_id = UUID(binding["tool_id"])
+            tool = self.session.scalar(
+                select(Tool).where(
+                    Tool.id == tool_id,
+                    Tool.workspace_id == self.workspace_id,
+                )
+            )
+            published = self.session.scalar(
+                select(ToolVersion).where(
+                    ToolVersion.tool_id == tool_id,
+                    ToolVersion.workspace_id == self.workspace_id,
+                    ToolVersion.version == binding["version"],
+                )
+            )
+            if tool is None or not tool.enabled or published is None:
+                raise DomainError(422, "tool_unavailable", "Bound tool version is unavailable")
+            tools.append(
+                {
+                    "tool_id": str(tool_id),
+                    "version": published.version,
+                    "definition": deepcopy(published.snapshot),
+                }
+            )
+        return {"agent": config, "model": model, "tools": tools}
+
+    def steps(self, run_id):
+        self.get(run_id)
+        return list(
+            self.session.scalars(
+                select(StepExecution)
+                .where(
+                    StepExecution.run_id == run_id,
+                    StepExecution.workspace_id == self.workspace_id,
+                )
+                .order_by(StepExecution.created_at, StepExecution.id)
+            )
+        )
 
     def _resolve_idempotent(self, run: Run, fingerprint: str):
         if run.request_fingerprint != fingerprint:

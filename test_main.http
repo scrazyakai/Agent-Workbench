@@ -5,14 +5,14 @@ GET {{baseUrl}}/health
 Accept: application/json
 
 ### Create a model connection
-# Export MODEL_DEMO_KEY in the server process before running the connection test.
+# Replace the key and model with values supported by your Chat Completions provider.
 POST {{baseUrl}}/v1/model-connections
 Content-Type: application/json
 
 {
   "name": "OpenAI Demo",
   "provider": "openai_compatible",
-  "model_name": "gpt-5",
+  "model_name": "your-chat-model",
   "base_url": "https://api.openai.com/v1",
   "api_key": "replace-with-a-real-api-key",
   "timeout_seconds": 10,
@@ -97,6 +97,7 @@ POST {{baseUrl}}/v1/runs
 Content-Type: application/json
 
 {
+  "execution_mode": "deterministic",
   "target": {"type": "agent", "id": "{{agentId}}", "version": {{agentVersion}}},
   "thread_id": "demo-thread",
   "input": {"question": "分析本周销售趋势"},
@@ -110,6 +111,26 @@ GET {{baseUrl}}/v1/runs/{{runId}}
 
 ### Poll durable events after cursor 0
 GET {{baseUrl}}/v1/runs/{{runId}}/events?after=0&limit=100
+
+### Stream durable events (server closes after terminal status; reconnect uses Last-Event-ID)
+GET {{baseUrl}}/v1/runs/{{runId}}/stream?after=0
+Accept: text/event-stream
+
+### Inspect step-level Trace
+GET {{baseUrl}}/v1/runs/{{runId}}/steps
+
+### Create a real model Run — may incur provider charges
+POST {{baseUrl}}/v1/runs
+Content-Type: application/json
+
+{
+  "execution_mode": "model",
+  "target": {"type": "agent", "id": "{{agentId}}", "version": {{agentVersion}}},
+  "input": {"question": "分析以下销售额变化", "sales": [100, 120, 150]},
+  "idempotency_key": "demo-model-run-1"
+}
+
+> {% client.global.set("runId", response.body.id); %}
 
 ### Cancel queued/running Run (idempotent)
 POST {{baseUrl}}/v1/runs/{{runId}}/cancel

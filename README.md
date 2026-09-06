@@ -1,6 +1,6 @@
 # AI Workbench
 
-基于 FastAPI 和 PostgreSQL 16 的 Agent 开发平台。当前完成 Agent、模型连接与工具的定义管理，以及带 PostgreSQL 租约、Checkpoint、恢复和取消能力的确定性 Agent Runtime。
+基于 FastAPI 和 PostgreSQL 16 的 Agent 开发平台。支持配置、发布 Agent，通过真实模型与只读 HTTP/MCP 工具执行任务，并提供 PostgreSQL 租约、Checkpoint、恢复、取消、预算、SSE 和基础步骤 Trace。
 
 ## 本地启动
 
@@ -80,6 +80,8 @@ cd frontend && npm run lint && npm run build
 | GET | `/v1/runs` | 按状态、Agent 或 thread 筛选运行摘要 |
 | GET | `/v1/runs/{id}` | 查询状态、输入、结果或结构化错误 |
 | GET | `/v1/runs/{id}/events` | 按递增游标读取持久化事件 |
+| GET | `/v1/runs/{id}/stream` | SSE，支持 `after` 和 `Last-Event-ID` 断线续传 |
+| GET | `/v1/runs/{id}/steps` | 步骤状态、尝试次数、耗时及调用摘要 |
 | POST | `/v1/runs/{id}/cancel` | 幂等提交协作式取消 |
 
 创建草稿只需 `name`；发布要求非空 `system_prompt`，且 `model_config.connection_id` 必须指向当前 Workspace 内存在并启用的 Model Connection。请求示例见 `test_main.http`。
@@ -122,4 +124,37 @@ PATCH 中未提供的顶层字段保持原值，提供的嵌套对象整体替�
 
 ## 当前边界
 
-这是 M1 的确定性执行阶段。模型连接、HTTP/MCP Tool Registry、Agent 工具版本绑定，以及 Run 状态机、独立 Worker、数据库租约、Checkpoint、故障接管、thread 串行、幂等创建和取消已经完成。当前 Worker 只校验 AgentVersion 的输入 Schema 并生成可预测结果，尚未调用真实模型或绑定工具。尚未实现鉴权、审批执行、Workflow、SSE、完整 Trace 和 Eval，服务仅用于本地开发。固定 Workspace 来自服务端配置，不提供安全多租户承诺。下一步接入受控模型与工具调用。
+这是 M1 的受控模型执行阶段，尚未实现鉴权、人工审批、Workflow、完整 Trace / Eval、费用计价和 Redis 调度。服务仅用于本地开发，固定 Workspace 不提供安全多租户承诺。默认仍部署单 Worker、单并发；多 Worker 的领取与 thread 互斥有数据库测试保护，不代表已经完成规模化压测。
+
+## 模型 Runtime 使用与验收
+
+部署升级时先停止旧 API 和 Worker，再执行 `uv run alembic upgrade head` 并启动新版进程；不要混跑新旧执行器。`0007` 为旧 Run 保留 `deterministic` 模式，新建 Run 默认使用 `model`，会产生上游调用费用。Runs 创建器可以显式选择「确定性测试」，不调用模型或工具。
+
+1. 创建并测试 Model Connection。真实生成由 LangChain `ChatOpenAI` 调用 Chat Completions，平台不再手写模型 HTTP 请求或 SSE 解码。当前锁定版本会将输出上限转换为 `max_completion_tokens`，启用 `stream_usage`，绑定工具时关闭并行工具调用；温度等参数的模型特定处理由 LangChain 完成。供应商必须兼容相应参数及流式格式；仅 `/models` 测试成功不保证生成接口兼容，不支持时会以安全错误结束。
+2. 发布一个只读 HTTP GET 或标注为只读的远程 MCP Tool，再将具体 ToolVersion 绑定到 Agent，填写系统提示与预算并发布 AgentVersion。
+3. 从 Agent 版本页或 Runs 创建真实模型 Run。输入是 JSON 对象；系统提示应明确如何解释输入、何时调用工具。设置输出 Schema 时会要求模型输出 JSON 并在本地校验；此版本未启用供应商的强制结构化输出模式。
+4. 在 Run 详情观察模型输出、步骤 Trace、Token 用量和最终结果。结果格式为 `{"text":"...","structured":null}`，配置输出 Schema 时 `structured` 为已校验 JSON。中间输出按模型步骤与尝试次数分组，失败尝试不会冒充最终结果。
+5. 在模型或工具等待期间取消 Run，状态应从 `cancelling` 转为 `cancelled`，不继续后续步骤。总时限从首次领取算起，含重试与恢复等待；到期为 `timed_out`。单次模型/工具超时是独立的安全错误。
+
+运行语义与限制：
+
+- Run 创建时固定 Agent、模型非敏感配置与 ToolVersion 快照；凭证调用时解密，不放入运行快照。调用前重新检查连接/工具启用状态及工具风险；端点改变时拒绝继续，避免向旧地址发送新凭证。其他草稿变化不改变已发布调用参数。
+- 仅执行已绑定、已发布、`risk_level=read` 且无需审批的工具，HTTP 限 GET。MCP 只读性依赖注册方如实声明，不是远端副作用的技术证明。保留现有工具出站限制、超时和响应大小限制。
+- 模型响应、工具响应与运行对话上下文在每步完成时和 Checkpoint 同事务落库。提交后的步骤不会重做；外部调用完成但检查点未提交时，接管可能再次调用或再次计费，仍是「至少一次」，不是 exactly-once。
+- 每次模型/工具尝试消耗一步；工具预算统计逻辑调用，HTTP 内部 GET 重试仍由发布配置控制。调用前用消息/工具定义 UTF-8 字节数加余量及输出上限做保守 Token 预留，拿到有效用量后替换；失败、中断或未报告用量的调用保留预留，恢复不会清零。该估计不是精确 tokenizer 或供应商硬消费上限；供应商超报用量会在入账后终止 Run。
+- `usage.total_tokens` 是已报告用量，`charged_tokens` 是预算占用（含未知用量预留），`unmeasured_calls` 标记成功但未报告用量的调用。未配置价格，不显示伪造费用。
+- SSE 发送 `run_event`，其 `id` 为每个 Run 内递增序号；终态补齐全部历史后发送 `done`。支持超过 100 条事件分页补齐，浏览器断线自动续传。模型增量是脱敏后的中间观测，最终结果只认 `succeeded`。
+- thread ID 仅用于串行调度，不自动继承其他 Run 的对话。当前 Trace 为步骤及事件级摘要，不是完整 Span 树；字段级敏感数据策略与保留清理仍待实现。不要在输入或提示中粘贴密钥。
+
+自动回归：`uv run pytest -q`。模型 Runtime 专项：`uv run pytest tests/test_model_runtime.py -q`，使用专用 PostgreSQL 测试库及模拟上游，不调用付费模型。覆盖协议流解析、只读工具循环、检查点恢复、同 thread 并发领取、旧租约写回拒绝、长请求续租、取消、超时、预算、脱敏及 SSE 游标。
+
+### LangChain / LangGraph 执行实现
+
+- LangChain：使用 `langchain-openai` 的 `ChatOpenAI.bind_tools()` / `astream()`；聚合原生 `AIMessageChunk`、工具调用片段和用量。SDK 负责 HTTP 请求和 SSE 协议解析，平台只保留策略检查、脱敏、格式转换与错误归类。模型输出解码后限制 2 MiB；原始流帧的缓冲与解码交由 SDK，不再声称平台在解码前限制原始响应。
+- LangGraph：使用 `StateGraph` 的 `model`、`tool` 节点和条件边执行循环，无手写循环调度。每个节点通过现有 Worker 事务，原子提交 StepExecution、用量、事件和 Checkpoint；下一节点只读取已提交状态。
+- 恢复：继续使用 PostgreSQL 中已有的运行检查点格式，旧模型 Run 也可恢复。LangGraph 不另配置独立 checkpointer；领取后读取最新数据库状态，从待执行模型或工具节点进入图。此阶段不提供 LangGraph 原生 time-travel / `Command(resume=...)` 审批能力。
+- 重试：LangChain / SDK 的 `max_retries=0`，不配置图节点自动重试；失败由平台统一重试并计入预算。数据库租约、单 Worker 单并发、只读工具策略、取消与 SSE 契约不变。
+- 隐私：图和模型调用显式禁用 LangSmith 自动追踪，避免开发机环境变量触发未经授权的提示/工具结果上传；仍使用本地 RunEvent 与步骤 Trace。
+- 升级：在项目根目录运行 `uv sync`，然后重启 API 和 Worker。本次框架替换不新增数据库迁移。业务 HTTP Tool 的网络执行和 `/models` 连接探测仍保留，不属于手写模型生成请求。
+
+实现参考：[LangChain ChatOpenAI](https://docs.langchain.com/oss/python/integrations/chat/openai)、[LangGraph Graph API](https://docs.langchain.com/oss/python/langgraph/graph-api)、[OpenAI Chat Completions](https://developers.openai.com/api/reference/cli/resources/chat)。

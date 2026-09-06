@@ -4,7 +4,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
-RunStatus = Literal["queued", "running", "succeeded", "failed", "cancelling", "cancelled"]
+RunStatus = Literal[
+    "queued", "running", "succeeded", "failed", "timed_out", "cancelling", "cancelled"
+]
 OptionalReference = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
 ]
@@ -21,6 +23,7 @@ class RunTarget(StrictModel):
 
 
 class RunCreate(StrictModel):
+    execution_mode: Literal["model", "deterministic"] = "model"
     target: RunTarget
     thread_id: OptionalReference | None = None
     input: dict[str, Any]
@@ -28,6 +31,8 @@ class RunCreate(StrictModel):
 
 
 class RunSummary(BaseModel):
+    execution_mode: Literal["model", "deterministic"]
+    usage: dict[str, Any]
     id: UUID
     workspace_id: str
     target: RunTarget
@@ -87,3 +92,17 @@ class RunEventPage(BaseModel):
     items: list[RunEventRead]
     next_cursor: int
     has_more: bool
+
+
+class StepRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    step_key: str
+    status: str
+    attempt_count: int
+    input_summary: dict | None
+    output_summary: dict | None
+    error_code: str | None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None

@@ -247,9 +247,13 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .run-status.queued, .run-status.cancelling { background: #f2eee2; color: #8c742c; }
 .run-status.running { background: #e6eff5; color: #39708d; }
 .run-status.succeeded { background: #e5f2e8; color: #38764e; }
-.run-status.failed, .run-status.cancelled { background: #f6e8e5; color: #9b5144; }
+.run-status.failed, .run-status.cancelled, .run-status.timed_out { background: #f6e8e5; color: #9b5144; }
 .run-detail { padding: 24px 28px 95px; }
 .run-detail > section { margin-bottom: 24px; }
+.run-detail h3 { margin: 0 0 12px; font-size: 13px; }
+.run-detail p { color: #73796e; font-size: 12px; line-height: 1.6; }
+.run-detail details { margin-bottom: 10px; border: 1px solid #e3e7df; border-radius: 8px; }
+.run-detail summary { cursor: pointer; padding: 12px; font-size: 12px; overflow-wrap: anywhere; }
 .run-meta { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
 .run-meta > div { display: flex; flex-direction: column; gap: 5px; padding: 13px; }
 .run-meta > div + div { border-left: 1px solid var(--line); }
