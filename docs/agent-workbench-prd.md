@@ -251,6 +251,8 @@ queued → running → succeeded
 - 同一 thread_id 首期串行执行，避免会话状态并发覆盖。
 - 取消是协作式取消，不承诺撤销已完成的外部操作。
 - 预算采用执行前检查和执行后累计；在途请求可能产生有限超额。
+- 调度基础设施分阶段演进：MVP 使用 PostgreSQL 租约队列；后续在吞吐、延迟或 Worker 规模达到迁移条件时，引入 Redis Streams 消息队列。
+- 引入 Redis 后，PostgreSQL 仍是 Run、Checkpoint、幂等键和最终状态的事实来源；Redis 只负责调度通知与任务分发。
 
 #### 验收标准
 
@@ -447,15 +449,17 @@ FastAPI
 └── Eval API
       │
       ▼
-持久化任务调度 → Python Workers
-                   ├── LangGraph 执行
-                   ├── LangChain 模型与工具适配
-                   └── 平台工具调用网关
+PostgreSQL Outbox → Redis Streams → Python Workers
+                                     ├── LangGraph 执行
+                                     ├── LangChain 模型与工具适配
+                                     └── 平台工具调用网关
       │
       ├── PostgreSQL：业务数据、检查点、执行记录
-      ├── Redis：可选队列 / 缓存加速
+      ├── Redis Streams：后续阶段的消息队列与调度加速层
       └── 对象存储：大体积输出、附件、评测产物
 ```
+
+MVP 阶段尚未部署 Redis 时，由 Worker 使用 PostgreSQL `FOR UPDATE SKIP LOCKED`、租约和心跳领取 Run。上图中的 Outbox 与 Redis Streams 是后续调度架构，不改变 PostgreSQL 作为运行事实来源的定位。
 
 ### 技术分工
 
@@ -463,10 +467,47 @@ FastAPI
 | --- | --- |
 | LangChain | 模型接口、工具适配、结构化输出 |
 | LangGraph | 状态图、条件路由、中断和检查点执行 |
+| Redis Streams | 后续阶段的任务通知、消费者组分发、积压与重投递 |
 | 平台服务 | 身份权限、版本、调度、幂等、审计、产品 API |
 | React | 配置、调试、运行观测和评测界面 |
 
 关键约束：LangGraph 提供执行基础，但任务调度、外部副作用安全、权限和完整运营能力仍需平台实现并验证。
+
+### 7.1 Redis 消息队列演进方案
+
+#### MVP：PostgreSQL 租约队列
+
+- `runs.status=queued` 表示等待调度，不依赖外部消息队列。
+- Worker 通过 `FOR UPDATE SKIP LOCKED` 领取任务，并写入 `worker_id`、心跳和租约到期时间。
+- Worker 异常退出后，其他 Worker 扫描过期租约并从最新 Checkpoint 恢复。
+- Run 创建、幂等约束和初始事件在同一数据库事务提交，避免跨系统双写。
+
+#### 后续：Redis Streams 调度
+
+- 选用 Redis Streams Consumer Groups，而不是仅使用不持久化的 Pub/Sub。
+- API 创建 Run 时，在同一 PostgreSQL 事务中写入 Run 与 Transactional Outbox 记录。
+- 独立 Publisher 将 Outbox 事件投递到 Redis Stream，成功后标记 Outbox 已发布。
+- Worker 从 Consumer Group 消费消息，但执行前必须读取并锁定 PostgreSQL Run；Redis 消息不能直接决定业务状态。
+- 消息确认应在 Worker 成功取得数据库租约后进行。重复消息、消息重投递和 Publisher 重复发布均按至少一次投递处理。
+- Redis 暂时不可用时，Run 与 Outbox 不丢失；服务恢复后继续投递。不得为了 Redis 可用性绕过 PostgreSQL 幂等和状态校验。
+- PostgreSQL 过期租约扫描继续保留，作为 Worker 崩溃、消息丢失或 Redis 恢复后的兜底机制。
+
+#### 引入条件
+
+满足以下任一条件并经压测确认后，进入 Redis 阶段：
+
+- PostgreSQL 轮询对业务数据库造成可观测的持续负载。
+- 1 秒级轮询延迟无法满足产品要求，需要更低调度延迟。
+- Worker 数量或 Run 创建速率使数据库抢占竞争明显上升。
+- 产品需要优先级、延迟任务、显式积压、消费组监控或更强背压能力。
+
+#### Redis 阶段验收标准
+
+- 数据库事务成功但 Publisher 中断时，Outbox 能在恢复后补投消息。
+- 同一消息重复投递不会创建新 Run，也不会让两个 Worker 同时推进一个 Run。
+- Redis 重启或短时不可用不会丢失已在 PostgreSQL 确认创建的 Run。
+- Consumer 崩溃后的 Pending 消息可被重新认领，且从数据库 Checkpoint 正确恢复。
+- Redis 积压量、Pending 数、最长等待时间、重投递次数和死信数量均有监控告警。
 
 ## 8. 核心数据对象
 
@@ -479,6 +520,7 @@ FastAPI
 | SecretReference | 凭证引用 |
 | Thread | 会话与上下文归属 |
 | Run | 单次运行与状态 |
+| OutboxEvent | 后续将已提交 Run 可靠投递到 Redis Streams 的事务消息 |
 | StepExecution | 节点 / 工具调用记录 |
 | Checkpoint | 持久化执行状态 |
 | Approval | 审批对象、参数摘要与结果 |
@@ -544,6 +586,7 @@ idempotency_key 用于避免客户端重试重复创建 Run；不代表 Run 内�
 | 初始容量 | 在约定测试环境支持 20 个并发活跃 Run |
 | 故障恢复 | 可恢复运行在故障检测后 60s 内重新进入调度 |
 | 数据可靠性 | 已确认持久化的任务和审批不因单 Worker 重启丢失 |
+| 队列可靠性 | Redis 阶段的短时不可用或重复投递不得丢失 Run 或重复推进状态 |
 | 安全 | 凭证加密、日志脱敏、服务端鉴权、出站网络控制 |
 | 可观测性 | 所有 Run 有关联标识；遥测缺失需可检测 |
 | 数据保留 | Trace 默认保留 30 天，支持配置与清理 |
@@ -554,6 +597,7 @@ idempotency_key 用于避免客户端重试重复创建 Run；不代表 Run 内�
 | --- | --- | --- |
 | M1：单 Agent 闭环 | 基础权限、模型连接、Builder、HTTP / Python 工具、Runtime、基础 Trace | 一个工具型 Agent 可配置、发布并通过 API 调用 |
 | M2：可靠执行 | Checkpoint、审批、恢复、幂等记录、取消与预算控制 | 长任务通过故障注入和重复提交测试 |
+| M2.5：调度扩展 | Transactional Outbox、Redis Streams Consumer Groups、Pending 重领、积压监控 | Redis 故障与重复投递测试通过，且 PostgreSQL 继续作为事实来源 |
 | M3：工作流闭环 | 顺序、分支、受限循环、多 Agent 节点、图级 Trace | 研究—分析—审核流程稳定运行 |
 | M4：质量闭环 | 数据集、规则评测、版本对比、可选 LLM Judge | 新版本上线前可执行可复查的回归评测 |
 

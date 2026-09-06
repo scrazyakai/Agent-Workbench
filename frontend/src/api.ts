@@ -2,6 +2,7 @@ import type {
   Agent, AgentFormData, AgentPage, ConnectionTestResult, ModelConnection,
   ModelConnectionFormData, ModelConnectionPage, Tool, ToolFormData, ToolPage,
   ToolTestResult, Version, VersionPage,
+  Run, RunEventPage, RunPage,
 } from './types'
 
 type ErrorBody = { error?: { message?: string; details?: Array<{ message?: string }> } }
@@ -110,6 +111,13 @@ export const api = {
       method: 'POST', body: JSON.stringify({ arguments: argumentsValue }),
     }),
   discoverMcpTools: (id: string) => request<{ tools: Array<{ name: string; description: string }> }>(`/v1/tools/${id}/discover`, { method: 'POST' }),
+  listRuns: (params = new URLSearchParams({ limit: '100' })) => request<RunPage>(`/v1/runs?${params}`),
+  getRun: (id: string) => request<Run>(`/v1/runs/${id}`),
+  getRunEvents: (id: string, after = 0) => request<RunEventPage>(`/v1/runs/${id}/events?after=${after}&limit=100`),
+  createRun: (payload: { target: { type: 'agent'; id: string; version: number }; input: Record<string, unknown>; thread_id?: string; idempotency_key?: string }) => request<Run>('/v1/runs', {
+    method: 'POST', body: JSON.stringify(payload),
+  }),
+  cancelRun: (id: string) => request<Run>(`/v1/runs/${id}/cancel`, { method: 'POST' }),
 }
 
 function toConnectionPayload(form: ModelConnectionFormData, requireApiKey = false) {

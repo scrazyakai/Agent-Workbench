@@ -8,7 +8,8 @@ import {
 import { api, ApiError } from './api'
 import type {
   Agent, AgentFormData, ConnectionTestResult, HttpToolConfig, McpToolConfig, ModelConnection,
-  ModelConnectionFormData, Tool, ToolFormData, ToolTestResult, Version,
+  ModelConnectionFormData, Run, RunEvent, RunStatus, RunSummary, Tool, ToolFormData,
+  ToolTestResult, Version,
 } from './types'
 
 const PAGE_SIZE = 6
@@ -98,7 +99,7 @@ function ModuleCard({ icon: Icon, title, description, status, action }: { icon: 
   return <button className="module-card" onClick={action}><span className="module-icon"><Icon size={20} /></span><span><strong>{title}</strong><small>{description}</small></span><span className={status === '可用' ? 'module-status ready' : 'module-status'}>{status}</span><ArrowRight size={17} /></button>
 }
 
-function WorkspacePage({ route, agentTotal, connections, reloadConnections, tools, reloadTools, notify, navigate }: { route: Exclude<RoutePath, '/agents'>; agentTotal: number; connections: ModelConnection[]; reloadConnections: () => Promise<void>; tools: Tool[]; reloadTools: () => Promise<void>; notify: (message: string, kind?: 'success' | 'error') => void; navigate: (path: RoutePath) => void }) {
+function WorkspacePage({ route, agentTotal, connections, reloadConnections, tools, reloadTools, notify, navigate, runPreset, clearRunPreset }: { route: Exclude<RoutePath, '/agents'>; agentTotal: number; connections: ModelConnection[]; reloadConnections: () => Promise<void>; tools: Tool[]; reloadTools: () => Promise<void>; notify: (message: string, kind?: 'success' | 'error') => void; navigate: (path: RoutePath) => void; runPreset: { agentId: string; version: number } | null; clearRunPreset: () => void }) {
   const planned = () => notify('该模块的后端能力将在下一阶段接入', 'error')
   if (route === '/overview') return <>
     <PageHeading route={route} action={<button className="primary create-button" onClick={() => navigate('/agents')}><Plus size={18} />创建 Agent</button>} />
@@ -120,11 +121,7 @@ function WorkspacePage({ route, agentTotal, connections, reloadConnections, tool
     <EmptyModule icon={GitBranch} title="还没有 Workflow" description="后续支持顺序执行、条件分支、人工审批和带次数上限的审核循环。" action="了解 Agent 版本" onAction={() => navigate('/agents')} />
   </>
 
-  if (route === '/runs') return <>
-    <PageHeading route={route} />
-    <section className="summary-row"><div><Activity /><span>活跃 Run</span><strong>0</strong></div><div><Check /><span>今日成功</span><strong>0</strong></div><div><Clock3 /><span>等待审批</span><strong>0</strong></div></section>
-    <section className="data-panel"><header><h2>最近运行</h2><span>Runtime API 待接入</span></header><div className="table-head"><span>Run ID</span><span>目标</span><span>状态</span><span>开始时间</span></div><EmptyModule icon={Play} title="暂无运行记录" description="发布 Agent 后，Runtime 将在这里提供创建、取消、恢复和事件订阅入口。" action="前往 Agents" onAction={() => navigate('/agents')} compact /></section>
-  </>
+  if (route === '/runs') return <RunsPage notify={notify} preset={runPreset} clearPreset={clearRunPreset} />
 
   if (route === '/evaluations') return <>
     <PageHeading route={route} action={<button className="primary create-button" onClick={planned}><Plus size={18} />创建评测</button>} />
@@ -310,6 +307,94 @@ function ToolTestDrawer({ tool, close, completed, notify }: { tool: Tool; close:
   return <div className="drawer-layer"><button className="drawer-scrim" aria-label="关闭工具测试" onClick={close} /><section className="drawer connection-drawer"><header className="drawer-header"><div><span className="eyebrow">TOOL TEST</span><h2>测试 {tool.name}</h2></div><button className="icon-button" aria-label="关闭" onClick={close}><X /></button></header><form onSubmit={run} className="agent-form"><section><h3>调用参数</h3><div className="form-grid"><label className="full code-field">JSON 输入<textarea value={input} onChange={event => setInput(event.target.value)} rows={12} spellCheck={false} /></label></div></section><footer className="drawer-actions"><div className="spacer" /><button type="button" className="text-button" onClick={close}>取消</button><button className="primary" disabled={busy}>{busy ? '调用中…' : '执行测试'}</button></footer></form></section></div>
 }
 
+const runLabels: Record<RunStatus, string> = {
+  queued: '排队中', running: '运行中', succeeded: '已成功', failed: '失败',
+  cancelling: '取消中', cancelled: '已取消',
+}
+
+function RunsPage({ notify, preset, clearPreset }: { notify: (message: string, kind?: 'success' | 'error') => void; preset: { agentId: string; version: number } | null; clearPreset: () => void }) {
+  const [runs, setRuns] = useState<RunSummary[]>([])
+  const [total, setTotal] = useState(0)
+  const [status, setStatus] = useState<RunStatus | ''>('')
+  const [loading, setLoading] = useState(true)
+  const [createOpen, setCreateOpen] = useState(Boolean(preset))
+  const [selected, setSelected] = useState<string | null>(null)
+  const load = useCallback(async () => {
+    const params = new URLSearchParams({ limit: '100' })
+    if (status) params.set('status', status)
+    try {
+      const result = await api.listRuns(params)
+      setRuns(result.items); setTotal(result.total)
+    } catch (error) { notify(error instanceof Error ? error.message : '无法加载运行记录', 'error') }
+    finally { setLoading(false) }
+  }, [status, notify])
+  useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 2000); return () => window.clearInterval(timer) }, [load])
+  useEffect(() => { if (preset) setCreateOpen(true) }, [preset])
+  const active = runs.filter(run => run.status === 'queued' || run.status === 'running' || run.status === 'cancelling').length
+  const succeeded = runs.filter(run => run.status === 'succeeded').length
+  const recovered = runs.reduce((sum, run) => sum + run.recovery_count, 0)
+  return <>
+    <PageHeading route="/runs" action={<button className="primary create-button" onClick={() => setCreateOpen(true)}><Plus size={18} />创建 Run</button>} />
+    <section className="summary-row"><div><Activity /><span>活跃 Run</span><strong>{active}</strong></div><div><Check /><span>当前成功</span><strong>{succeeded}</strong></div><div><Clock3 /><span>恢复次数</span><strong>{recovered}</strong></div></section>
+    <section className="toolbar run-toolbar"><label>状态<select value={status} onChange={event => setStatus(event.target.value as RunStatus | '')}><option value="">全部状态</option>{Object.entries(runLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><span className="result-count">{total} 个结果 · 每 2 秒刷新</span></section>
+    <section className="data-panel runs-panel"><header><h2>最近运行</h2><span>PostgreSQL durable runtime</span></header>
+      {loading ? <div className="state-panel"><div className="spinner" /><p>正在加载运行记录…</p></div> : runs.length ? <div className="run-list">{runs.map(run => <button className="run-row" key={run.id} onClick={() => setSelected(run.id)}><code>{run.id.slice(0, 8)}</code><span>Agent · v{run.target.version}</span><span className={`status run-status ${run.status}`}>{runLabels[run.status]}</span><span>{relativeDate(run.updated_at)}</span><ChevronRight size={16} /></button>)}</div> : <EmptyModule icon={Play} title="暂无运行记录" description="选择一个已发布 Agent 版本，创建第一个可恢复 Run。" action="创建 Run" onAction={() => setCreateOpen(true)} compact />}
+    </section>
+    {createOpen && <CreateRunDrawer preset={preset} close={() => { setCreateOpen(false); clearPreset() }} saved={run => { setCreateOpen(false); clearPreset(); setSelected(run.id); void load() }} notify={notify} />}
+    {selected && <RunDetailDrawer runId={selected} close={() => setSelected(null)} changed={load} notify={notify} />}
+  </>
+}
+
+function CreateRunDrawer({ preset, close, saved, notify }: { preset: { agentId: string; version: number } | null; close: () => void; saved: (run: Run) => void; notify: (message: string, kind?: 'success' | 'error') => void }) {
+  const [agents, setAgents] = useState<Agent[]>([])
+  const [versions, setVersions] = useState<Version[]>([])
+  const [agentId, setAgentId] = useState(preset?.agentId || '')
+  const [version, setVersion] = useState(preset ? String(preset.version) : '')
+  const [input, setInput] = useState('{}')
+  const [threadId, setThreadId] = useState('')
+  const [key, setKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    api.listAgents(new URLSearchParams({ limit: '100' })).then(result => {
+      const published = result.items.filter(agent => agent.latest_version)
+      setAgents(published)
+      if (!agentId && published[0]) setAgentId(published[0].id)
+    }).catch(error => notify(error instanceof Error ? error.message : '无法加载 Agent', 'error'))
+  }, [agentId, notify])
+  useEffect(() => {
+    if (!agentId) { setVersions([]); return }
+    api.listVersions(agentId).then(result => {
+      setVersions(result.items)
+      if (!result.items.some(item => String(item.version) === version)) setVersion(result.items[0] ? String(result.items[0].version) : '')
+    }).catch(error => notify(error instanceof Error ? error.message : '无法加载版本', 'error'))
+  }, [agentId, version, notify])
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault(); setBusy(true)
+    try {
+      const value = JSON.parse(input) as Record<string, unknown>
+      const run = await api.createRun({ target: { type: 'agent', id: agentId, version: Number(version) }, input: value, ...(threadId.trim() ? { thread_id: threadId.trim() } : {}), ...(key.trim() ? { idempotency_key: key.trim() } : {}) })
+      notify('Run 已创建'); saved(run)
+    } catch (error) { notify(error instanceof SyntaxError ? 'Run 输入不是合法 JSON' : error instanceof Error ? error.message : '创建失败', 'error') }
+    finally { setBusy(false) }
+  }
+  return <div className="drawer-layer"><button className="drawer-scrim" aria-label="关闭 Run 创建器" onClick={close} /><section className="drawer connection-drawer"><header className="drawer-header"><div><span className="eyebrow">AGENT RUNTIME</span><h2>创建 Run</h2></div><button className="icon-button" aria-label="关闭" onClick={close}><X /></button></header><form onSubmit={submit} className="agent-form"><section><h3>执行目标</h3><div className="form-grid"><label className="full">已发布 Agent<select value={agentId} onChange={event => { setAgentId(event.target.value); setVersion('') }} required><option value="">请选择 Agent</option>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label><label>版本<select value={version} onChange={event => setVersion(event.target.value)} required><option value="">请选择版本</option>{versions.map(item => <option key={item.id} value={item.version}>v{item.version}</option>)}</select></label><label>Thread ID<input value={threadId} onChange={event => setThreadId(event.target.value)} placeholder="可选，同一 Thread 串行" /></label><label className="full">幂等键<input value={key} onChange={event => setKey(event.target.value)} placeholder="可选，重试创建时复用" /></label></div></section><section><h3>输入</h3><div className="form-grid"><label className="full code-field">JSON 输入<textarea value={input} onChange={event => setInput(event.target.value)} rows={10} spellCheck={false} /></label></div></section><footer className="drawer-actions"><div className="spacer" /><button type="button" className="text-button" onClick={close}>取消</button><button className="primary" disabled={busy || !agentId || !version}>{busy ? '创建中…' : '创建 Run'}</button></footer></form></section></div>
+}
+
+function RunDetailDrawer({ runId, close, changed, notify }: { runId: string; close: () => void; changed: () => Promise<void>; notify: (message: string, kind?: 'success' | 'error') => void }) {
+  const [run, setRun] = useState<Run | null>(null)
+  const [events, setEvents] = useState<RunEvent[]>([])
+  const load = useCallback(async () => {
+    try { const [current, timeline] = await Promise.all([api.getRun(runId), api.getRunEvents(runId)]); setRun(current); setEvents(timeline.items) }
+    catch (error) { notify(error instanceof Error ? error.message : '无法加载 Run', 'error') }
+  }, [runId, notify])
+  useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 2000); return () => window.clearInterval(timer) }, [load])
+  const cancel = async () => {
+    try { await api.cancelRun(runId); notify('已提交取消请求'); await load(); await changed() }
+    catch (error) { notify(error instanceof Error ? error.message : '取消失败', 'error') }
+  }
+  return <div className="drawer-layer"><button className="drawer-scrim" aria-label="关闭 Run 详情" onClick={close} /><section className="drawer"><header className="drawer-header"><div><span className="eyebrow">RUN DETAILS</span><h2>{run ? `${runLabels[run.status]} · ${run.id.slice(0, 8)}` : '加载中…'}</h2></div><button className="icon-button" aria-label="关闭" onClick={close}><X /></button></header>{run && <div className="run-detail"><section className="run-meta"><div><span>Agent 版本</span><strong>v{run.target.version}</strong></div><div><span>恢复次数</span><strong>{run.recovery_count}</strong></div><div><span>执行失败次数</span><strong>{run.execution_attempts}</strong></div></section><section><div className="section-title"><div><h3>输入</h3></div></div><pre>{JSON.stringify(run.input, null, 2)}</pre></section>{(run.result || run.error) && <section><div className="section-title"><div><h3>{run.result ? '结果' : '错误'}</h3></div></div><pre>{JSON.stringify(run.result || run.error, null, 2)}</pre></section>}<section><div className="section-title"><div><h3>事件时间线</h3></div></div><div className="event-list">{events.map(event => <div key={event.id}><i /><span><strong>{event.event_type}</strong><small>#{event.sequence} · {new Date(event.created_at).toLocaleString('zh-CN')}</small></span></div>)}</div></section></div>}<footer className="drawer-actions">{run && ['queued', 'running', 'cancelling'].includes(run.status) && <button className="secondary" onClick={() => void cancel()}>取消 Run</button>}<div className="spacer" /><button className="primary" onClick={close}>关闭</button></footer></section></div>
+}
+
 function EmptyModule({ icon: Icon, title, description, action, onAction, compact = false }: { icon: typeof Bot; title: string; description: string; action: string; onAction: () => void; compact?: boolean }) {
   return <div className={`state-panel empty-state module-empty ${compact ? 'compact' : ''}`}><div className="empty-icon"><Icon /></div><h2>{title}</h2><p>{description}</p><button className="secondary" onClick={onAction}>{action}<ArrowRight size={15} /></button></div>
 }
@@ -328,10 +413,11 @@ function AgentCard({ agent, select }: { agent: Agent; select: () => void }) {
 
 type DrawerProps = {
   agent: Agent | null; mode: 'create' | 'edit'; close: () => void;
-  connections: ModelConnection[]; tools: Tool[]; saved: (agent: Agent) => void; notify: (message: string, kind?: 'success' | 'error') => void
+  connections: ModelConnection[]; tools: Tool[]; saved: (agent: Agent) => void; notify: (message: string, kind?: 'success' | 'error') => void;
+  runVersion: (agentId: string, version: number) => void
 }
 
-function AgentDrawer({ agent, mode, close, connections, tools, saved, notify }: DrawerProps) {
+function AgentDrawer({ agent, mode, close, connections, tools, saved, notify, runVersion }: DrawerProps) {
   const [form, setForm] = useState<AgentFormData>(() => agent ? formFromAgent(agent) : emptyForm)
   const [tab, setTab] = useState<'config' | 'versions'>('config')
   const [versions, setVersions] = useState<Version[]>([])
@@ -375,7 +461,7 @@ function AgentDrawer({ agent, mode, close, connections, tools, saved, notify }: 
         <section><h3>执行约束</h3><div className="form-grid three"><label>最大步骤<input aria-label="最大步骤" type="number" min="1" value={form.maxSteps} onChange={set('maxSteps')} /></label><label>工具调用上限<input aria-label="工具调用上限" type="number" min="0" value={form.maxToolCalls} onChange={set('maxToolCalls')} /></label><label>运行超时（秒）<input aria-label="运行超时" type="number" min="1" value={form.timeoutSeconds} onChange={set('timeoutSeconds')} /></label><label>Token 预算<input aria-label="Token 预算" type="number" min="1" value={form.tokenBudget} onChange={set('tokenBudget')} /></label></div></section>
         <section><h3>输入与输出</h3><div className="form-grid"><label className="full code-field">输入 JSON Schema<textarea aria-label="输入 JSON Schema" value={form.inputSchema} onChange={set('inputSchema')} rows={5} spellCheck={false} /></label><label className="full code-field">输出 JSON Schema（可选）<textarea aria-label="输出 JSON Schema" value={form.outputSchema} onChange={set('outputSchema')} rows={5} spellCheck={false} placeholder={'{\n  "type": "object"\n}'} /></label></div></section>
         <footer className="drawer-actions">{mode === 'edit' && <button type="button" className="secondary" onClick={publish} disabled={busy}><Zap size={16} />发布新版本</button>}<div className="spacer" /><button type="button" className="text-button" onClick={close}>取消</button><button className="primary" disabled={busy}>{busy ? '处理中…' : mode === 'create' ? '创建草稿' : '保存草稿'}</button></footer>
-      </form> : <div className="version-panel">{versions.length ? versions.map(v => <div className="version-row" key={v.id}><div className="timeline-dot"><Check size={14} /></div><div><strong>版本 v{v.version}</strong><p>{new Date(v.published_at).toLocaleString('zh-CN')}</p><small>{v.snapshot.model_config.connection_id || '未设置模型连接'} · {v.snapshot.system_prompt.slice(0, 46)}{v.snapshot.system_prompt.length > 46 ? '…' : ''}</small></div></div>) : <div className="empty-versions"><FileCode2 /><h3>还没有发布版本</h3><p>配置完整后发布第一个不可变版本。</p></div>}</div>}
+      </form> : <div className="version-panel">{versions.length ? versions.map(v => <div className="version-row" key={v.id}><div className="timeline-dot"><Check size={14} /></div><div><strong>版本 v{v.version}</strong><p>{new Date(v.published_at).toLocaleString('zh-CN')}</p><small>{v.snapshot.model_config.connection_id || '未设置模型连接'} · {v.snapshot.system_prompt.slice(0, 46)}{v.snapshot.system_prompt.length > 46 ? '…' : ''}</small></div><button className="secondary" onClick={() => runVersion(v.agent_id, v.version)}><Play size={14} />运行</button></div>) : <div className="empty-versions"><FileCode2 /><h3>还没有发布版本</h3><p>配置完整后发布第一个不可变版本。</p></div>}</div>}
     </section>
   </div>
 }
@@ -394,6 +480,7 @@ export default function App() {
   const [menu, setMenu] = useState(false)
   const [connections, setConnections] = useState<ModelConnection[]>([])
   const [tools, setTools] = useState<Tool[]>([])
+  const [runPreset, setRunPreset] = useState<{ agentId: string; version: number } | null>(null)
 
   useEffect(() => {
     const handlePopState = () => setRoute(currentRoute())
@@ -458,10 +545,10 @@ export default function App() {
           <section className="toolbar"><div className="search-box"><Search size={18} /><input aria-label="搜索 Agent" value={name} onChange={e => { setName(e.target.value); setPage(0) }} placeholder="搜索 Agent 名称…" />{name && <button aria-label="清除搜索" onClick={() => setName('')}><X size={15} /></button>}</div><div className="tag-filter"><Tag size={16} /><input aria-label="按标签筛选" value={tag} onChange={e => { setTag(e.target.value); setPage(0) }} placeholder="筛选标签" /></div><span className="result-count">{total} 个结果</span></section>
           {loading ? <div className="state-panel"><div className="spinner" /><p>正在加载 Agent…</p></div> : error ? <div className="state-panel error-state"><Activity /><h2>连接服务失败</h2><p>{error}</p><button className="secondary" onClick={load}>重新加载</button></div> : agents.length ? <div className="agent-grid">{agents.map(agent => <AgentCard key={agent.id} agent={agent} select={() => setDrawer({ mode: 'edit', agent })} />)}</div> : <div className="state-panel empty-state"><div className="empty-icon"><Bot /></div><h2>{name || tag ? '没有匹配的 Agent' : '创建你的第一个 Agent'}</h2><p>{name || tag ? '试试调整名称或标签筛选条件。' : '从一份可编辑草稿开始，完成配置后发布不可变版本。'}</p>{!name && !tag && <button className="primary" onClick={() => setDrawer({ mode: 'create', agent: null })}><Plus size={18} />创建 Agent</button>}</div>}
           {total > PAGE_SIZE && <nav className="pagination" aria-label="分页"><button className="icon-button" aria-label="上一页" disabled={page === 0} onClick={() => setPage(page - 1)}><ChevronLeft /></button><span>第 {page + 1} / {pages} 页</span><button className="icon-button" aria-label="下一页" disabled={page + 1 >= pages} onClick={() => setPage(page + 1)}><ChevronRight /></button></nav>}
-        </> : <WorkspacePage route={route} agentTotal={total} connections={connections} reloadConnections={loadConnections} tools={tools} reloadTools={loadTools} notify={notify} navigate={navigate} />}
+        </> : <WorkspacePage route={route} agentTotal={total} connections={connections} reloadConnections={loadConnections} tools={tools} reloadTools={loadTools} notify={notify} navigate={navigate} runPreset={runPreset} clearRunPreset={() => setRunPreset(null)} />}
       </div>
     </main>
-    {drawer && <AgentDrawer mode={drawer.mode} agent={drawer.agent} connections={connections} tools={tools} close={() => setDrawer(null)} saved={() => void load()} notify={notify} />}
+    {drawer && <AgentDrawer mode={drawer.mode} agent={drawer.agent} connections={connections} tools={tools} close={() => setDrawer(null)} saved={() => void load()} notify={notify} runVersion={(agentId, version) => { setDrawer(null); setRunPreset({ agentId, version }); navigate('/runs') }} />}
     {toast && <div role="status" className={`toast ${toast.kind}`}><span>{toast.kind === 'success' ? <Check size={16} /> : <X size={16} />}</span>{toast.message}</div>}
   </div>
 }

@@ -90,6 +90,30 @@ GET {{baseUrl}}/v1/agents/{{agentId}}
 ### Publish immutable snapshot
 POST {{baseUrl}}/v1/agents/{{agentId}}/versions
 
+> {% client.global.set("agentVersion", response.body.version); %}
+
+### Create a durable deterministic Run
+POST {{baseUrl}}/v1/runs
+Content-Type: application/json
+
+{
+  "target": {"type": "agent", "id": "{{agentId}}", "version": {{agentVersion}}},
+  "thread_id": "demo-thread",
+  "input": {"question": "分析本周销售趋势"},
+  "idempotency_key": "demo-run-1"
+}
+
+> {% client.global.set("runId", response.body.id); %}
+
+### Run detail (start `uv run python -m app.worker` to execute it)
+GET {{baseUrl}}/v1/runs/{{runId}}
+
+### Poll durable events after cursor 0
+GET {{baseUrl}}/v1/runs/{{runId}}/events?after=0&limit=100
+
+### Cancel queued/running Run (idempotent)
+POST {{baseUrl}}/v1/runs/{{runId}}/cancel
+
 ### Edit only draft
 PATCH {{baseUrl}}/v1/agents/{{agentId}}
 Content-Type: application/json

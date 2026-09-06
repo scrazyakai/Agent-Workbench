@@ -185,3 +185,45 @@ export type ToolTestResult = {
   duration_ms: number
   tested_at: string
 }
+
+export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelling' | 'cancelled'
+
+export type RunTarget = { type: 'agent'; id: string; version: number }
+
+export type RunSummary = {
+  id: string
+  workspace_id: string
+  target: RunTarget
+  thread_id: string | null
+  status: RunStatus
+  execution_attempts: number
+  recovery_count: number
+  created_at: string
+  updated_at: string
+  started_at: string | null
+  completed_at: string | null
+}
+
+export type Run = RunSummary & {
+  input: Record<string, unknown>
+  result: Record<string, unknown> | null
+  error: { code: string; message: string } | null
+  cancel_requested_at: string | null
+}
+
+export type RunPage = { items: RunSummary[]; total: number; offset: number; limit: number }
+
+export type RunEvent = {
+  id: string
+  run_id: string
+  sequence: number
+  event_type: string
+  payload: Record<string, unknown>
+  created_at: string
+}
+
+export type RunEventPage = {
+  items: RunEvent[]
+  next_cursor: number
+  has_more: boolean
+}

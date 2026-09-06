@@ -10,7 +10,17 @@ from sqlalchemy import delete
 from sqlalchemy.engine import make_url
 
 from app.core.config import Settings
-from app.db.models import Agent, AgentVersion, ModelConnection, Tool, ToolVersion
+from app.db.models import (
+    Agent,
+    AgentVersion,
+    Checkpoint,
+    ModelConnection,
+    Run,
+    RunEvent,
+    StepExecution,
+    Tool,
+    ToolVersion,
+)
 from app.db.session import build_engine
 from app.main import create_app
 
@@ -45,6 +55,10 @@ def application(database_url):
     yield app
     engine = build_engine(database_url)
     with engine.begin() as connection:
+        connection.execute(delete(RunEvent).where(RunEvent.workspace_id == workspace))
+        connection.execute(delete(Checkpoint).where(Checkpoint.workspace_id == workspace))
+        connection.execute(delete(StepExecution).where(StepExecution.workspace_id == workspace))
+        connection.execute(delete(Run).where(Run.workspace_id == workspace))
         connection.execute(delete(AgentVersion).where(AgentVersion.workspace_id == workspace))
         connection.execute(delete(Agent).where(Agent.workspace_id == workspace))
         connection.execute(delete(ToolVersion).where(ToolVersion.workspace_id == workspace))

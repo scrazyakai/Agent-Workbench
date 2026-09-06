@@ -1,6 +1,6 @@
 # AI Workbench
 
-基于 FastAPI 和 PostgreSQL 16 的 Agent 开发平台。当前完成 Agent 草稿、模型连接管理、配置校验、不可变版本快照和查询接口。
+基于 FastAPI 和 PostgreSQL 16 的 Agent 开发平台。当前完成 Agent、模型连接与工具的定义管理，以及带 PostgreSQL 租约、Checkpoint、恢复和取消能力的确定性 Agent Runtime。
 
 ## 本地启动
 
@@ -13,6 +13,14 @@ uv sync
 uv run alembic upgrade head
 uv run uvicorn app.main:app --reload --host 127.0.0.1
 ```
+
+Runtime 使用独立 Worker。另开终端启动：
+
+```bash
+uv run python -m app.worker
+```
+
+默认每个 Worker 串行执行一个 Run；可以启动多个 Worker 横向并发。Worker 使用数据库行锁和租约领取任务，异常退出后，其他 Worker 会在租约过期后从最新 Checkpoint 继续原 Run。
 
 访问 [OpenAPI 调试页](http://127.0.0.1:8000/docs) 和 [健康检查](http://127.0.0.1:8000/health)。根目录 `main.py` 兼容 `uvicorn main:app`。应用启动不会自动建表；数据库不可达或缺少业务表时健康检查返回 `503`。
 
@@ -30,7 +38,7 @@ npm run dev
 
 控制台提供 `/overview`、`/agents`、`/tools`、`/workflows`、`/runs`、`/evaluations`、`/settings` 和 `/help` 八个可直接访问、刷新和前进后退的页面。Agents 已接通真实 API，支持分页列表、名称与标签筛选、草稿创建和修改、工具版本绑定、发布新版本及版本时间线。设置页支持创建、编辑、启停及测试 Model Connection；Tools 页支持 HTTP 与远程 MCP Streamable HTTP 工具的注册、发现、测试、启停和版本发布。
 
-Workflows、Runs 和 Evaluations 目前提供完整的信息架构、模块状态和跨页面入口；对应后端 API 尚未实现，页面会明确显示“待接入”，不会伪造业务数据或成功操作。
+Runs 页面已接通真实 API，支持从已发布 Agent 版本创建 Run、状态筛选、详情与事件轮询，以及协作式取消。Workflows 和 Evaluations 仍为信息架构占位，对应后端 API 尚未实现。
 
 ## 验证
 
@@ -68,6 +76,11 @@ cd frontend && npm run lint && npm run build
 | POST | `/v1/agents/{id}/versions` | 发布配置快照 |
 | GET | `/v1/agents/{id}/versions` | 版本列表，最新在前，支持分页 |
 | GET | `/v1/agents/{id}/versions/{version}` | 版本详情 |
+| POST | `/v1/runs` | 基于已发布 Agent 版本创建 Run，支持幂等键 |
+| GET | `/v1/runs` | 按状态、Agent 或 thread 筛选运行摘要 |
+| GET | `/v1/runs/{id}` | 查询状态、输入、结果或结构化错误 |
+| GET | `/v1/runs/{id}/events` | 按递增游标读取持久化事件 |
+| POST | `/v1/runs/{id}/cancel` | 幂等提交协作式取消 |
 
 创建草稿只需 `name`；发布要求非空 `system_prompt`，且 `model_config.connection_id` 必须指向当前 Workspace 内存在并启用的 Model Connection。请求示例见 `test_main.http`。
 
@@ -109,4 +122,4 @@ PATCH 中未提供的顶层字段保持原值，提供的嵌套对象整体替�
 
 ## 当前边界
 
-这是 M1 的定义管理部分。模型连接、HTTP/MCP Tool Registry 及 Agent 工具版本绑定已经完成，但尚未实现 Agent Run/Worker；此处发布表示配置快照发布，不表示可执行上线。尚未实现鉴权、审批执行、Workflow、Trace 和 Eval，服务仅用于本地开发。固定 Workspace 来自服务端配置，不提供安全多租户承诺。下一步进入 Run 状态机、Worker 和基础 Trace。
+这是 M1 的确定性执行阶段。模型连接、HTTP/MCP Tool Registry、Agent 工具版本绑定，以及 Run 状态机、独立 Worker、数据库租约、Checkpoint、故障接管、thread 串行、幂等创建和取消已经完成。当前 Worker 只校验 AgentVersion 的输入 Schema 并生成可预测结果，尚未调用真实模型或绑定工具。尚未实现鉴权、审批执行、Workflow、SSE、完整 Trace 和 Eval，服务仅用于本地开发。固定 Workspace 来自服务端配置，不提供安全多租户承诺。下一步接入受控模型与工具调用。

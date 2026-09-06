@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Request
 from sqlalchemy import select
 
-from app.db.models import Agent, AgentVersion, ModelConnection, Tool, ToolVersion
+from app.db.models import Agent, AgentVersion, ModelConnection, Run, RunEvent, Tool, ToolVersion
 
 router = APIRouter(tags=["Health"])
 
@@ -14,4 +14,6 @@ def health(request: Request):
         session.execute(select(ModelConnection.id).limit(1))
         session.execute(select(Tool.id).limit(1))
         session.execute(select(ToolVersion.id).limit(1))
+        session.execute(select(Run.id).limit(1))
+        session.execute(select(RunEvent.id).limit(1))
     return {"status": "ok", "database": "ok"}

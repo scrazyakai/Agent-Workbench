@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -101,3 +102,78 @@ class ToolVersion(Base):
     version: Mapped[int] = mapped_column(Integer)
     snapshot: Mapped[dict] = mapped_column(JSON)
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Run(Base):
+    __tablename__ = "runs"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "idempotency_key", name="uq_run_workspace_idempotency"),
+        Index("ix_runs_status_created", "status", "created_at"),
+        Index("ix_runs_workspace_thread_status", "workspace_id", "thread_id", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    workspace_id: Mapped[str] = mapped_column(String(100), index=True)
+    agent_id: Mapped[UUID] = mapped_column(ForeignKey("agents.id"), index=True)
+    agent_version_id: Mapped[UUID] = mapped_column(ForeignKey("agent_versions.id"), index=True)
+    agent_version: Mapped[int] = mapped_column(Integer)
+    thread_id: Mapped[str | None] = mapped_column(String(200), index=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(200))
+    request_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    input: Mapped[dict] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    result: Mapped[dict | None] = mapped_column(JSON)
+    error: Mapped[dict | None] = mapped_column(JSON)
+    worker_id: Mapped[str | None] = mapped_column(String(200))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    execution_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    recovery_count: Mapped[int] = mapped_column(Integer, default=0)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class StepExecution(Base):
+    __tablename__ = "step_executions"
+    __table_args__ = (UniqueConstraint("run_id", "step_key", name="uq_step_run_key"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("runs.id"), index=True)
+    workspace_id: Mapped[str] = mapped_column(String(100), index=True)
+    step_key: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(32))
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    input_summary: Mapped[dict | None] = mapped_column(JSON)
+    output_summary: Mapped[dict | None] = mapped_column(JSON)
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Checkpoint(Base):
+    __tablename__ = "checkpoints"
+    __table_args__ = (UniqueConstraint("run_id", "sequence", name="uq_checkpoint_run_sequence"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("runs.id"), index=True)
+    workspace_id: Mapped[str] = mapped_column(String(100), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    state: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RunEvent(Base):
+    __tablename__ = "run_events"
+    __table_args__ = (UniqueConstraint("run_id", "sequence", name="uq_run_event_sequence"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("runs.id"), index=True)
+    workspace_id: Mapped[str] = mapped_column(String(100), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    event_type: Mapped[str] = mapped_column(String(100))
+    payload: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
